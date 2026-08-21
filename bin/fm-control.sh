@@ -664,14 +664,14 @@ resolve_relaunch_profile() {
       TARGET_MODEL_SOURCE=config/secondmate-harness
     elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
       TARGET_MODEL=$PRIOR_MODEL
-      TARGET_MODEL_SOURCE=${PRIOR_MODEL_SOURCE:-task-metadata}
+      TARGET_MODEL_SOURCE=task-metadata
     else
       TARGET_MODEL=default
       TARGET_MODEL_SOURCE=
     fi
   elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
     TARGET_MODEL=$PRIOR_MODEL
-    TARGET_MODEL_SOURCE=${PRIOR_MODEL_SOURCE:-task-metadata}
+    TARGET_MODEL_SOURCE=task-metadata
   else
     TARGET_MODEL=default
     TARGET_MODEL_SOURCE=
@@ -685,9 +685,7 @@ resolve_relaunch_profile() {
   else
     TARGET_EFFORT=default
   fi
-  [ -n "$TARGET_MODEL" ] && [ "$TARGET_MODEL" != default ] \
-    || die "relaunch of $ID has no concrete model for $TARGET_HARNESS; pass --model because implicit harness defaults are prohibited"
-  fm_model_policy_check "$TARGET_MODEL" "$TARGET_MODEL_SOURCE" || exit 1
+  fm_model_policy_require_concrete "$TARGET_MODEL" "$TARGET_MODEL_SOURCE" "relaunch of $ID" || exit 1
 }
 
 # safe_checkpoint: prove, before anything is stopped, that the work a relaunch

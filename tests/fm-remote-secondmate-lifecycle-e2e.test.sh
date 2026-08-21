@@ -120,7 +120,7 @@ git -C "$PARENT/projects/alpha" push -q -u origin main
 cat > "$PARENT/data/projects.md" <<EOF
 - alpha [direct-PR] - alpha project (added 2026-08-02)
 EOF
-printf 'codex\n' > "$PARENT/config/secondmate-harness"
+printf 'codex gpt-5.5\n' > "$PARENT/config/secondmate-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
 printf 'primary harness defaults\n' > "$PARENT/config/crew-harness"
 
@@ -212,6 +212,8 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
     printf 'backend=tmux\n'
     printf 'target=firstmate:fm-ios\n'
     printf 'harness=codex\n'
+    printf 'model=gpt-5.5\n'
+    printf 'model_source=flag\n'
     exit 0
     ;;
   launch-default-session-route:fm-remote-secondmate-control.sh:*)
@@ -221,6 +223,8 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
     printf 'target=default:w1:p2\n'
     printf 'herdr_session=default\n'
     printf 'harness=codex\n'
+    printf 'model=gpt-5.5\n'
+    printf 'model_source=flag\n'
     exit 0
     ;;
   provision-block-fail:fm-remote-home-provision.sh:*)
@@ -723,6 +727,20 @@ publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$ROOT/bin/fm-watch.s
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" = idle ] \
   || fail "remote endpoint delivery observation did not execute on its own host"
 pass "remote spawn launches on the remote-local backend and records a host-qualified route"
+
+remote_launches_before_reuse=$(grep -c '^tab create' "$HERDR_LOG" || true)
+printf 'codex gpt-5.6\n' > "$PARENT/config/secondmate-harness"
+out=$(remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate)
+assert_contains "$out" 'remote=remote-mac backend=herdr' \
+  "an already-live remote endpoint was not reconciled"
+assert_grep 'model=gpt-5.5' "$PARENT/state/ios.meta" \
+  "parent metadata replaced the live remote endpoint model with the newly requested model"
+assert_grep 'model_source=flag' "$PARENT/state/ios.meta" \
+  "parent metadata did not preserve the live remote endpoint model source"
+[ "$(grep -c '^tab create' "$HERDR_LOG" || true)" -eq "$remote_launches_before_reuse" ] \
+  || fail "remote endpoint reconciliation launched a duplicate agent"
+printf 'codex gpt-5.5\n' > "$PARENT/config/secondmate-harness"
+pass "remote endpoint reuse records the model actually running"
 
 remote_route_meta="$REMOTE_HOME/state/parent-route/ios.meta"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-default-session.meta"

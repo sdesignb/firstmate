@@ -256,6 +256,8 @@ fm_write_secondmate_meta() {
     "kind=secondmate" \
     "mode=secondmate" \
     "yolo=off" \
+    "model=test-model" \
+    "model_source=task-metadata" \
     "home=$home" \
     "projects=$projects"
 }

@@ -520,6 +520,26 @@ test_same_harness_relaunch_keeps_the_profile_axes() {
   pass "fm-control relaunch: a same-harness relaunch keeps the profile axes it was running with"
 }
 
+test_same_harness_relaunch_reuses_model_from_task_metadata() {
+  local dir out rc meta
+  dir=$(new_case stale-profile rl6b)
+  add_ship_task "$dir" rl6b claude
+  meta="$dir/home/state/rl6b.meta"
+  sed 's/^model_source=task-metadata$/model_source=config\/crew-dispatch.json/' \
+    "$meta" > "$meta.tmp"
+  mv "$meta.tmp" "$meta"
+
+  out=$(run_control "$dir" rl6b relaunch --note "same recorded runtime"); rc=$?
+  expect_code 0 "$rc" "a recorded model must remain recoverable after its old config source disappears"$'\n'"$out"
+  [ "$(meta_field "$dir" rl6b model)" = test-model ] \
+    || fail "the same-harness relaunch lost the recorded model"
+  [ "$(meta_field "$dir" rl6b model_source)" = task-metadata ] \
+    || fail "the relaunch preserved stale configuration provenance instead of its immediate metadata source"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "the replacement agent was not running after the metadata-backed relaunch"
+  pass "fm-control relaunch validates reused models from task metadata"
+}
+
 test_explicit_model_wins_over_the_recorded_one() {
   local dir out rc
   dir=$(new_case explicit rl7)
@@ -1387,6 +1407,7 @@ test_harness_switch_does_not_carry_the_old_profile_axes
 test_harness_switch_resolves_a_prefixed_recorded_harness
 test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
+test_same_harness_relaunch_reuses_model_from_task_metadata
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared

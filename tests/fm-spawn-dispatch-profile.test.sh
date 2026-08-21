@@ -981,6 +981,23 @@ test_resolved_model_provenance_is_recorded_in_task_metadata() {
   pass "task metadata records the resolved model and where it came from"
 }
 
+test_default_model_sentinel_is_refused() {
+  local rec id out status
+  id=profile-model-default-z24b
+  rec=$(make_spawn_case profile-model-default claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model default)
+  status=$?
+  expect_code 1 "$status" "the default model sentinel must not reach a harness default"
+  assert_contains "$out" "implicit harness defaults are prohibited" \
+    "the default sentinel refusal did not explain the concrete-model requirement"
+  assert_absent "$HOME_DIR/state/$id.meta" "the default sentinel refusal wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "the default sentinel refusal typed a launch command"
+  pass "the default model sentinel is refused before launch"
+}
+
 test_a_model_merely_containing_those_letters_still_spawns() {
   local rec id out status
   id=profile-model-affable-z25
@@ -1032,6 +1049,7 @@ test_fable_in_a_raw_launch_command_is_refused
 test_fable_in_a_wrapper_path_does_not_block_a_safe_raw_model
 test_fable_dispatch_profile_names_its_configuration_source
 test_resolved_model_provenance_is_recorded_in_task_metadata
+test_default_model_sentinel_is_refused
 test_a_model_merely_containing_those_letters_still_spawns
 
 echo "# all fm-spawn-dispatch-profile tests passed"

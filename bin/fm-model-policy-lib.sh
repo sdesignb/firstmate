@@ -61,3 +61,15 @@ fm_model_policy_check() {
     'The captain prohibits the fable model fleet-wide, and firstmate never silently substitutes another model for it. Correct that source and dispatch again.' >&2
   return 1
 }
+
+fm_model_policy_require_concrete() {
+  local model=${1:-} source=${2:-} subject=${3:-launch}
+  case "$model" in
+    ''|default|-)
+      printf 'error: no concrete model resolved for %s from %s; pass an explicit model because implicit harness defaults are prohibited.\n' \
+        "$subject" "$(fm_model_policy_source_label "$source")" >&2
+      return 1
+      ;;
+  esac
+  fm_model_policy_check "$model" "$source"
+}

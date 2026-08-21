@@ -387,11 +387,16 @@ if [ "$MODEL_SOURCE" = raw-launch-command ]; then
   exit 1
 fi
 if [ "$MODEL_SOURCE" = task-metadata ] && [ "$RELAUNCH" -eq 0 ]; then
-  echo "error: --model-source task-metadata applies only to --relaunch" >&2
-  exit 1
+  RECOVERY_META="$STATE/${POS[0]:-}.meta"
+  [ "$KIND" = secondmate ] && [ -f "$RECOVERY_META" ] && [ ! -L "$RECOVERY_META" ] \
+    && [ "$(fm_meta_get "$RECOVERY_META" kind)" = secondmate ] \
+    && [ "$(fm_meta_get "$RECOVERY_META" model)" = "$MODEL" ] || {
+      echo "error: --model-source task-metadata requires matching recorded secondmate metadata" >&2
+      exit 1
+    }
 fi
 if [ "$MODEL_SET" -eq 1 ]; then
-  fm_model_policy_check "$MODEL" "$MODEL_SOURCE" || exit 1
+  fm_model_policy_require_concrete "$MODEL" "$MODEL_SOURCE" "${POS[0]:-spawn}" || exit 1
 fi
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
@@ -464,7 +469,7 @@ fi
 
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model model_source effort backend out rc meta tmp
-  local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
+  local remote_backend remote_target remote_harness remote_model remote_model_source remote_herdr_session registry_lock remote_lock remote_generation
   local remote_traceparent remote_recorded_traceparent
   local -a launch_args
   id=${POS[0]:-}
@@ -530,13 +535,7 @@ spawn_remote_secondmate() {
       [ -n "$effort" ] || effort=-
     fi
   fi
-  if [ "$model" != - ] && ! fm_model_policy_check "$model" "$model_source"; then
-    fm_lock_release "$registry_lock" || true
-    fm_lock_release "$SPAWN_TASK_LOCK" || true
-    return 1
-  fi
-  if [ "$model" = - ]; then
-    echo "error: no model resolved for $id; pass --model or add a model token to config/secondmate-harness because implicit harness defaults are prohibited" >&2
+  if ! fm_model_policy_require_concrete "$model" "$model_source" "$id"; then
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
     return 1
@@ -658,6 +657,8 @@ spawn_remote_secondmate() {
   remote_backend=$(printf '%s\n' "$out" | sed -n 's/^backend=//p' | tail -1)
   remote_target=$(printf '%s\n' "$out" | sed -n 's/^target=//p' | tail -1)
   remote_harness=$(printf '%s\n' "$out" | sed -n 's/^harness=//p' | tail -1)
+  remote_model=$(printf '%s\n' "$out" | sed -n 's/^model=//p' | tail -1)
+  remote_model_source=$(printf '%s\n' "$out" | sed -n 's/^model_source=//p' | tail -1)
   remote_herdr_session=$(printf '%s\n' "$out" | sed -n 's/^herdr_session=//p' | tail -1)
   if [ "$remote_backend" != herdr ]; then
     fm_lock_release "$remote_lock" || true
@@ -673,6 +674,22 @@ spawn_remote_secondmate() {
     echo "error: remote launch returned malformed route metadata; preserving the remote route for reconciliation" >&2
     return 1
   }
+  case "$remote_model_source" in
+    flag|config/crew-dispatch.json|config/secondmate-harness|raw-launch-command|task-metadata) ;;
+    *)
+      fm_lock_release "$remote_lock" || true
+      fm_lock_release "$registry_lock" || true
+      fm_lock_release "$SPAWN_TASK_LOCK" || true
+      echo "error: remote launch returned no valid model provenance; preserving the remote route for reconciliation" >&2
+      return 1
+      ;;
+  esac
+  if ! fm_model_policy_require_concrete "$remote_model" "$remote_model_source" "remote secondmate $id"; then
+    fm_lock_release "$remote_lock" || true
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
+  fi
   if [ "$remote_herdr_session" != fm-remote ] || [ "${remote_target%%:*}" != "$remote_herdr_session" ]; then
     fm_lock_release "$remote_lock" || true
     fm_lock_release "$registry_lock" || true
@@ -699,8 +716,8 @@ spawn_remote_secondmate() {
     echo "mode=secondmate"
     echo "yolo=off"
     echo "tasktmp="
-    echo "model=${model#-}"
-    echo "model_source=$model_source"
+    echo "model=$remote_model"
+    echo "model_source=$remote_model_source"
     echo "effort=${effort#-}"
     echo "home=$home"
     echo "projects=$(secondmate_registry_field "$DATA/secondmates.md" "$id" projects)"
@@ -1314,7 +1331,7 @@ case "$ARG3" in
     fi
     MODEL=$RAW_MODEL
     MODEL_SOURCE=raw-launch-command
-    fm_model_policy_check "$MODEL" "$MODEL_SOURCE" || exit 1
+    fm_model_policy_require_concrete "$MODEL" "$MODEL_SOURCE" "$ID" || exit 1
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -1402,7 +1419,7 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
     if [ -n "$SM_MODEL" ]; then
       MODEL=$SM_MODEL
       MODEL_SOURCE=config/secondmate-harness
-      fm_model_policy_check "$MODEL" config/secondmate-harness || exit 1
+      fm_model_policy_require_concrete "$MODEL" config/secondmate-harness "$ID" || exit 1
     fi
   fi
   if [ "$EFFORT_SET" -eq 0 ]; then
@@ -1418,11 +1435,7 @@ fi
 
 # Every model route has now resolved, so an implicit harness default is a
 # refusal and the recorded value plus provenance are always concrete.
-[ -n "$MODEL" ] || {
-  echo "error: no model resolved for $ID; pass --model because implicit harness defaults are prohibited" >&2
-  exit 1
-}
-fm_model_policy_check "$MODEL" "$MODEL_SOURCE" || exit 1
+fm_model_policy_require_concrete "$MODEL" "$MODEL_SOURCE" "$ID" || exit 1
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
