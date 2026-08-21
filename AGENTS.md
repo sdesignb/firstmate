@@ -186,7 +186,7 @@ Load `harness-adapters` before every spawn or recovery and before trust handling
 The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, and `cursor`, plus `muse` for crewmates and scouts only; never dispatch on an unverified adapter.
 If static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
 The fable model is prohibited fleet-wide and outranks every dispatch profile, configured default, and the generic fallback below: never select it for a crewmate, a secondmate, or any agent one of them spawns in turn.
-A configuration that resolves to fable is refused and reported with its source, never silently substituted; `bin/fm-model-policy-lib.sh` owns which ids match, and `bin/fm-spawn.sh` and `bin/fm-bootstrap.sh` enforce it at the spawn and configuration sources.
+Every Firstmate spawn must resolve an explicit concrete non-fable model and record its source; a missing, implicit, or fable result is refused and reported rather than silently substituted, with `bin/fm-model-policy-lib.sh` owning which ids match and `bin/fm-spawn.sh` and `bin/fm-bootstrap.sh` enforcing the policy.
 
 `docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-harness.sh` owns static resolution, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, consult them at every crewmate or scout intake and pass the resolved concrete profile required by `fm-spawn`, including `--model-source config/crew-dispatch.json`; use `--model-source flag` when an explicit captain override wins instead.

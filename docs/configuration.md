@@ -226,7 +226,7 @@ Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Cursor's stop hoo
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
 When pi-signed is selected, Firstmate preserves `FM_PI_HARNESS=pi-signed` and refuses the launch if the selected executable is unavailable rather than falling back to pi; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns executable resolution and launch mechanics.
 Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
-When it is absent or contains `default`, crewmates mirror the firstmate's own harness.
+When it is absent or contains `default`, crewmates mirror the firstmate's own harness; this fallback resolves only the adapter, and every spawn still requires an explicit concrete `--model`.
 `config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` resolves only the adapter; the spawn must also receive an explicit `--model`, because implicit harness model defaults are prohibited.
@@ -280,7 +280,7 @@ The single-object form stays fully backward-compatible, and every profile needs 
 Profile `effort` and rule `why` are optional.
 An omitted effort means the selected harness uses its own effort default.
 Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.
-If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
+If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to the adapter from `config/crew-harness` and choosing an explicit concrete model.
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.

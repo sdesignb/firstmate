@@ -895,6 +895,16 @@ test_network_phase_partitions_the_run() {
   # Break the two diagnostics that stand for the two halves: a local tool floor
   # and the network GitHub-auth probe.
   rm -f "$fakebin/node"
+  # A system Node may still exist later in BASE_PATH. Shadow Bash's `command`
+  # lookup for this one fixture so `command -v node` observes the intended
+  # missing-tool state without making the rest of the toolchain unavailable.
+  command() {
+    if [ "${1:-}" = -v ] && [ "${2:-}" = node ]; then
+      return 1
+    fi
+    builtin command "$@"
+  }
+  export -f command
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -925,6 +935,7 @@ SH
   [ "$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=sikp "$ROOT/bin/fm-bootstrap.sh")" = "$all_out" ] \
     || fail "an unrecognized FM_BOOTSTRAP_NETWORK value did not fall back to the complete run"
+  unset -f command
   pass "bootstrap: FM_BOOTSTRAP_NETWORK partitions one run into local and network halves"
 }
 

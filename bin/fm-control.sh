@@ -33,8 +33,9 @@
 #              Already-stopped is success (idempotent).
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
-#              harness/model/effort - so switching harness is one ordinary use
-#              of this verb. With no explicit axis, a secondmate re-resolves its
+#              harness/model/effort - so switching harness with a concrete model
+#              is one ordinary use of this verb. With no explicit axis, a
+#              secondmate re-resolves its
 #              durable config/secondmate-harness pin (harness plus its optional
 #              model and effort tokens) exactly as any other respawn does, while
 #              a ship or scout keeps the exact adapter already recorded for it.
@@ -653,8 +654,8 @@ resolve_relaunch_profile() {
   fm_control_harness_supports_kind "$TARGET_HARNESS" "$KIND" \
     || die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
   # A model or effort chosen for the previous harness does not transfer to a
-  # different one, so an explicit harness change resets both axes unless the
-  # caller names them too.
+  # different one, so an explicit harness change requires a new model and resets
+  # effort unless the caller names that axis too.
   if [ "$MODEL_SET" = 1 ]; then
     TARGET_MODEL=$NEW_MODEL
     TARGET_MODEL_SOURCE=flag

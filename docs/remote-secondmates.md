@@ -149,9 +149,10 @@ Use `bin/fm-home-seed.sh validate` to validate either form.
 Launch or recover the remote second mate with the same command used for a local route:
 
 ```sh
-bin/fm-spawn.sh <id> --secondmate
+bin/fm-spawn.sh <id> --secondmate --model <model>
 ```
 
+The `--model` flag may be omitted only when `config/secondmate-harness` supplies the concrete model token described in [configuration.md](configuration.md#harness-support).
 The primary resolves the verified secondmate harness, a required concrete model, and optional effort, runs the same readiness gate the seed runs, transfers the inherited-material allowlist, and asks the remote host to launch on Herdr in `fm-remote`.
 All remote secondmates on one host share `fm-remote` and retain separate `2ndmate-<id>` workspaces inside it.
 An explicit request for any other backend is refused rather than honored, and the remote host refuses one too.
@@ -160,7 +161,7 @@ A launch after a host has drifted out of readiness fails with the doctor's own g
 Raw launch commands are not accepted for remote secondmates.
 Backends that already refuse secondmate launch, currently Orca and cmux, remain unsupported on the remote host.
 
-Startup liveness recovery relaunches a dead or missing remote second mate through this same command, so recovery passes the same readiness gate rather than a weaker one.
+Startup liveness recovery relaunches a dead or missing remote second mate through the same spawn path with the model recorded in task metadata, so recovery passes the same model policy and readiness gate rather than weaker ones.
 
 Send routed requests normally:
 
