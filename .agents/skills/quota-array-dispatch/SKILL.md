@@ -49,6 +49,7 @@ It cannot override a hard-gate failure, and it is never hidden inside a new comp
 Deterministic shell must never map a model to a provider, a provider to a credential store, or a name prefix to a family.
 You establish those relations yourself, in the open, from the candidate's own authoritative catalog (`harness-adapters` owns the per-harness discovery surface) plus the one intake snapshot.
 
+A candidate naming the prohibited fable model fails this gate outright, whatever its quota position; `AGENTS.md` section 4 owns that constraint, and it is never a ranking or tie-break input.
 Confirm the catalog lists the candidate's model and record the provider family it reports.
 A model the catalog does not list is concrete contradictory evidence: block that candidate and quote the catalog result.
 Apply quota at the granularity the vendor actually supplies.
