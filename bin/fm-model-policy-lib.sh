@@ -21,8 +21,11 @@
 #     Return 0 when <text> names no prohibited model. Otherwise print the
 #     refusal, naming the offending value AND <source>, and return 1.
 #   fm_model_policy_source_label <source>
-#     Render a known source token as captain-readable prose; any other value is
-#     passed through, so a call site can supply its own phrase.
+#     Render a known source token - flag, config/secondmate-harness,
+#     raw-launch-command, harness-default - as readable prose. Any other value
+#     is passed through, so a call site can supply its own phrase. These tokens
+#     are the same vocabulary bin/fm-spawn.sh records as model_source= in a
+#     task's meta.
 #
 # Matching is bounded to the model name itself: `claude-fable-5`, `fable`, and
 # `fable-mini` are prohibited, while an unrelated id that merely contains those
@@ -52,6 +55,7 @@ fm_model_policy_source_label() {
   case "${1:-}" in
     flag) printf '%s\n' 'the --model flag' ;;
     config/secondmate-harness) printf '%s\n' 'the model token in config/secondmate-harness' ;;
+    raw-launch-command) printf '%s\n' 'the raw launch command' ;;
     harness-default) printf '%s\n' "the harness's own default" ;;
     '') printf '%s\n' 'an unnamed source' ;;
     *) printf '%s\n' "$1" ;;

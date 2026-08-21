@@ -1224,7 +1224,7 @@ case "$ARG3" in
     LAUNCH=$ARG3
     # The escape hatch carries its own flags, so a prohibited model can ride in
     # the command text itself rather than through --model.
-    fm_model_policy_check "$LAUNCH" 'the raw launch command' || exit 1
+    fm_model_policy_check "$LAUNCH" raw-launch-command || exit 1
     # The command text, not this script, decides the model here. Record that as
     # the provenance so the fleet knows where to look, and let it stand in for
     # the pin rather than reporting an unpinned launch.
