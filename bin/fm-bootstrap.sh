@@ -606,10 +606,88 @@ secondmate_liveness_sweep() {
   return 0
 }
 
-secondmate_liveness_respawn() {
-  local meta=$1 id=$2 model
+# Resolve the concrete model a recovery respawn must launch with, and backfill
+# it into a legacy record that predates the explicit-model requirement.
+#
+# A record written before that requirement carries no model= at all, which is
+# the shape every secondmate in an existing fleet has. Refusing those outright
+# would strand exactly the workers recovery exists to bring back, so a legacy
+# record is migrated ONCE from this home's own configured secondmate model
+# rather than from a harness default: the implicit resolution stays prohibited,
+# the value just comes from configuration the captain already set.
+#
+# Sets SECONDMATE_RECOVERY_MODEL on success. On failure it sets
+# SECONDMATE_RECOVERY_REASON to an actionable sentence and returns 1, and the
+# caller must then leave the endpoint alone - a record that cannot be relaunched
+# must not lose the endpoint it still has.
+SECONDMATE_RECOVERY_MODEL=
+SECONDMATE_RECOVERY_REASON=
+secondmate_recovery_model() {  # <meta> <id>
+  local meta=$1 id=$2 model configured lock tmp line rc=0
+  SECONDMATE_RECOVERY_MODEL=
+  SECONDMATE_RECOVERY_REASON=
   model=$(fm_meta_get "$meta" model)
-  fm_model_policy_require_concrete "$model" task-metadata "$id" || return 1
+  if fm_model_policy_is_concrete "$model"; then
+    if SECONDMATE_RECOVERY_REASON=$(fm_model_policy_check "$model" task-metadata 2>&1); then
+      SECONDMATE_RECOVERY_REASON=
+      SECONDMATE_RECOVERY_MODEL=$model
+      return 0
+    fi
+    SECONDMATE_RECOVERY_REASON=$(first_line "$SECONDMATE_RECOVERY_REASON")
+    return 1
+  fi
+  configured=$("$FM_ROOT/bin/fm-harness.sh" secondmate-model 2>/dev/null || true)
+  if ! fm_model_policy_is_concrete "$configured"; then
+    SECONDMATE_RECOVERY_REASON="no model is recorded and config/secondmate-harness names none; set a concrete model there as \"<harness> <model> [<effort>]\" so recovery can relaunch it"
+    return 1
+  fi
+  if ! SECONDMATE_RECOVERY_REASON=$(fm_model_policy_check "$configured" config/secondmate-harness 2>&1); then
+    SECONDMATE_RECOVERY_REASON=$(first_line "$SECONDMATE_RECOVERY_REASON")
+    return 1
+  fi
+  SECONDMATE_RECOVERY_REASON=
+  # fm-wake-lib.sh carries the meta locking helpers and is otherwise sourced
+  # lazily by secondmate_sync, which runs after this sweep. Source it on demand
+  # rather than moving it, so the sweep's cost is unchanged when no legacy
+  # record needs a backfill.
+  command -v fm_meta_lock_path >/dev/null 2>&1 || . "$SCRIPT_DIR/fm-wake-lib.sh"
+  lock=$(fm_meta_lock_path "$meta") || {
+    SECONDMATE_RECOVERY_REASON="the local record could not be locked to backfill its model"
+    return 1
+  }
+  fm_lock_acquire_wait "$lock" || {
+    SECONDMATE_RECOVERY_REASON="the local record could not be locked to backfill its model"
+    return 1
+  }
+  tmp="$meta.model-backfill.$$"
+  {
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        model=*|model_source=*) ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done < "$meta"
+    printf 'model=%s\n' "$configured"
+    printf 'model_source=%s\n' config/secondmate-harness
+  } > "$tmp" 2>/dev/null || rc=1
+  if [ "$rc" -eq 0 ] && mv -f -- "$tmp" "$meta" 2>/dev/null; then
+    fm_lock_release "$lock"
+    [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] \
+      || echo "BOOTSTRAP_INFO: secondmate $id: legacy record backfilled with model $configured from config/secondmate-harness"
+    SECONDMATE_RECOVERY_MODEL=$configured
+    return 0
+  fi
+  rm -f -- "$tmp" 2>/dev/null || true
+  fm_lock_release "$lock"
+  SECONDMATE_RECOVERY_REASON="the recorded model could not be backfilled into the local record"
+  return 1
+}
+
+# The model is resolved and validated by secondmate_recovery_model before any
+# teardown, so this only launches; <meta> stays in the signature because the
+# callers already hold it and a future recovery axis will need it.
+secondmate_liveness_respawn() {  # <meta> <id> <concrete-model>
+  local id=$2 model=$3
   FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate \
     --model "$model" --model-source task-metadata
 }
@@ -679,7 +757,11 @@ secondmate_liveness_one() {  # <meta> <id>
         ;;
       dead|missing)
         cause="remote endpoint $agent_state on its configured host"
-        if out=$(secondmate_liveness_respawn "$meta" "$id" 2>&1); then
+        if ! secondmate_recovery_model "$meta" "$id"; then
+          echo "SECONDMATE_LIVENESS: secondmate $id: skipped: $SECONDMATE_RECOVERY_REASON; route preserved on $remote_host"
+          return 0
+        fi
+        if out=$(secondmate_liveness_respawn "$meta" "$id" "$SECONDMATE_RECOVERY_MODEL" 2>&1); then
           SECONDMATE_RESPAWNED_IDS="$SECONDMATE_RESPAWNED_IDS $id"
           report_relaunch "$id" "$cause" "host=$remote_host"
         else
@@ -710,13 +792,20 @@ secondmate_liveness_one() {  # <meta> <id>
       fi
       ;;
     dead|missing)
+      # Resolve the model BEFORE anything is torn down. Killing a husk we then
+      # refuse to replace would leave the secondmate with neither an endpoint
+      # nor a replacement, which is worse than the launch this guard prevents.
+      if ! secondmate_recovery_model "$meta" "$id"; then
+        echo "SECONDMATE_LIVENESS: secondmate $id: skipped: $SECONDMATE_RECOVERY_REASON (backend=$backend)"
+        return 0
+      fi
       if [ "$agent_state" = dead ]; then
         cause="confirmed agent absence on existing endpoint"
         fm_backend_kill "$backend" "$target" 2>/dev/null || true
       else
         cause="recorded endpoint confidently missing"
       fi
-      if out=$(secondmate_liveness_respawn "$meta" "$id" 2>&1); then
+      if out=$(secondmate_liveness_respawn "$meta" "$id" "$SECONDMATE_RECOVERY_MODEL" 2>&1); then
         SECONDMATE_RESPAWNED_IDS="$SECONDMATE_RESPAWNED_IDS $id"
         report_relaunch "$id" "$cause" "backend=$backend"
       else
