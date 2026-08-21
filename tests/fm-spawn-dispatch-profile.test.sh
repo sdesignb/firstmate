@@ -166,10 +166,17 @@ assert_meta_profile() {
   assert_grep "effort=$effort" "$meta" "meta missing effort=$effort"
 }
 
-test_no_profile_uses_an_explicit_claude_model() {
-  local rec id out status expected launch
+# Two halves, deliberately in one test: the launch SHAPE (a pinned model reaches
+# the agent's argv and the record) and the GUARANTEE that the same path refuses
+# when no model is pinned. The shape half alone passed against the unfixed code
+# and proved nothing, because the shared helper auto-pins a model; the refusal
+# half is what makes this test fail without the guard, so it goes through
+# run_spawn directly to keep the helper's auto-pinning out of the way.
+test_claude_launch_requires_and_threads_an_explicit_model() {
+  local rec id unpinned out status expected launch
   id=profile-off-z1
-  rec=$(make_spawn_case profile-off claude "$id")
+  unpinned=profile-off-unpinned-z1e
+  rec=$(make_spawn_case profile-off claude "$id" "$unpinned")
   read_case_record "$rec"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
@@ -181,7 +188,17 @@ test_no_profile_uses_an_explicit_claude_model() {
   launch=$(cat "$LAUNCH_LOG")
   expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --model 'test-model' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
-  pass "a concrete model is recorded and typed into the claude launch instructions"
+
+  : > "$LAUNCH_LOG"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$unpinned" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 1 "$status" "the same path must refuse a spawn that pins no model"
+  assert_contains "$out" "no concrete model" \
+    "the refusal did not say that no concrete model was resolved"
+  assert_absent "$HOME_DIR/state/$unpinned.meta" "an unpinned spawn wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "an unpinned spawn typed a launch command"
+  pass "a concrete model is required, threaded into the claude launch, and recorded"
 }
 
 test_non_cursor_launch_clears_inherited_cursor_markers() {
@@ -1047,7 +1064,7 @@ test_a_model_merely_containing_those_letters_still_spawns() {
   pass "the model prohibition is bounded to the fable model itself"
 }
 
-test_no_profile_uses_an_explicit_claude_model
+test_claude_launch_requires_and_threads_an_explicit_model
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths

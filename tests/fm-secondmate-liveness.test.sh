@@ -331,7 +331,7 @@ new_world() {
 # worktree; a non-git home just makes the unrelated fast-forward sweep log a
 # harmless "not a git repo" skip.
 add_sm_home() {
-  local w=$1 id=$2 window=$3 harness=${4:-claude}
+  local w=$1 id=$2 window=$3 harness=${4:-claude} model=${5-test-model}
   local home="$w/$id"
   mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
@@ -341,6 +341,8 @@ add_sm_home() {
     printf 'window=%s\n' "$window"
     printf 'kind=secondmate\n'
     printf 'harness=%s\n' "$harness"
+    [ -z "$model" ] || printf 'model=%s\n' "$model"
+    [ -z "$model" ] || printf 'model_source=%s\n' task-metadata
     printf 'home=%s\n' "$home"
   } > "$w/home/state/$id.meta"
 }
@@ -368,6 +370,52 @@ test_sweep_respawns_confirmed_dead_secondmate() {
   assert_contains "$(cat "$log")" "new-window" \
     "a confirmed-dead secondmate should actually be relaunched"
   pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
+}
+
+# A record written before the explicit-model requirement carries no model= at
+# all. Recovery must still bring that worker back, migrating the model once from
+# the home's own configured secondmate model rather than from a harness default.
+test_sweep_backfills_and_respawns_a_legacy_record() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-legacy-backfill)
+  add_sm_home "$w" sm1 firstmate:fm-sm1 claude ''
+  printf 'claude backfilled-model\n' > "$w/home/config/secondmate-harness"
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log" FM_BOOTSTRAP_VERBOSE_FACTS=1)
+
+  assert_contains "$(cat "$log")" "new-window" \
+    "a legacy secondmate record must still be recoverable, not stranded by the model requirement"
+  assert_contains "$out" "secondmate sm1: legacy record backfilled with model backfilled-model from config/secondmate-harness" \
+    "the one-time backfill should be visible in verbose diagnostics"
+  # The respawn rewrites provenance to task-metadata, which is then the truthful
+  # source: after the backfill the launched model does come from the record.
+  assert_grep "model=backfilled-model" "$w/home/state/sm1.meta" \
+    "the legacy record should carry the concrete model it was recovered on"
+  pass "sweep: a legacy record without a model is backfilled from configuration and respawned"
+}
+
+# When nothing concrete can be resolved the worker cannot be relaunched, but it
+# must not also lose the endpoint it still has: killing a husk we then refuse to
+# replace is worse than the launch the guard prevents.
+test_sweep_keeps_the_endpoint_when_no_model_can_be_resolved() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-legacy-unresolvable)
+  add_sm_home "$w" sm1 firstmate:fm-sm1 claude ''
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped:" \
+    "an unrecoverable secondmate must be reported, never dropped silently"
+  assert_contains "$out" "config/secondmate-harness" \
+    "the report must name what to supply to make the secondmate recoverable"
+  case "$(cat "$log")" in
+    *kill-window*) fail "the endpoint was killed even though no replacement could be launched" ;;
+  esac
+  pass "sweep: an unresolvable model reports actionably and leaves the endpoint intact"
 }
 
 test_sweep_leaves_alive_secondmate_untouched() {
@@ -546,6 +594,8 @@ test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_leaves_alive_secondmate_untouched
+test_sweep_backfills_and_respawns_a_legacy_record
+test_sweep_keeps_the_endpoint_when_no_model_can_be_resolved
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate
 test_sweep_never_acts_on_ambiguous_existing_process
