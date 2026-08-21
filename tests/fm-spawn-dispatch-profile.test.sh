@@ -425,13 +425,14 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" "custom-agent --model test-model --flag")
+    "$id" "$PROJ_DIR" "custom-agent --model __MODEL__ --flag" \
+    --model test-model --model-source raw-launch-command)
   status=$?
   expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement"
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent test-model default
   launch=$(cat "$LAUNCH_LOG")
-  [ "$launch" = "custom-agent --model test-model --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  [ "$launch" = "custom-agent --model 'test-model' --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -900,7 +901,8 @@ test_fable_in_a_raw_launch_command_is_refused() {
   : > "$LAUNCH_LOG"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" "claude --model claude-fable-5 --dangerously-skip-permissions")
+    "$id" "$PROJ_DIR" "claude --model __MODEL__ --dangerously-skip-permissions" \
+    --model claude-fable-5 --model-source raw-launch-command)
   status=$?
   expect_code 1 "$status" "a raw launch command naming a fable model must be refused"
   assert_contains "$out" "raw launch command" \
@@ -917,12 +919,44 @@ test_fable_in_a_wrapper_path_does_not_block_a_safe_raw_model() {
   read_case_record "$rec"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" "/opt/fable-wrapper --model gpt-5")
+    "$id" "$PROJ_DIR" "/opt/fable-wrapper --model __MODEL__" \
+    --model gpt-5 --model-source raw-launch-command)
   status=$?
   expect_code 0 "$status" "the policy must inspect the raw command's model, not its harness path"
   assert_grep "model=gpt-5" "$HOME_DIR/state/$id.meta" \
     "the raw command's resolved model was not recorded"
   pass "a raw command's non-model fable text does not trigger the model prohibition"
+}
+
+test_raw_launch_model_is_bound_to_the_immediate_command() {
+  local rec unsafe safe out status launch
+  unsafe=profile-raw-unbound-z22d
+  safe=profile-raw-bound-z22e
+  rec=$(make_spawn_case profile-raw-binding claude "$unsafe" "$safe")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$unsafe" "$PROJ_DIR" "echo --model __MODEL__ && claude --dangerously-skip-permissions" \
+    --model test-model --model-source raw-launch-command)
+  status=$?
+  expect_code 1 "$status" "a compound raw command must not claim a model that never reaches the launched agent"
+  assert_contains "$out" "model placeholder" \
+    "the raw-command refusal did not explain how to bind the explicit model"
+  assert_absent "$HOME_DIR/state/$unsafe.meta" "the unbound raw command wrote task metadata"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$safe" "$PROJ_DIR" "custom-agent --model __MODEL__ --flag" \
+    --model test-model --model-source raw-launch-command)
+  status=$?
+  expect_code 0 "$status" "a simple raw command with one model placeholder should spawn"
+  launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" = "custom-agent --model 'test-model' --flag" ] \
+    || fail "the raw launch did not inject the explicit model into the immediate command"$'\n'"actual: $launch"
+  assert_grep "model=test-model" "$HOME_DIR/state/$safe.meta" \
+    "the bound raw command did not record its explicit model"
+  assert_grep "model_source=raw-launch-command" "$HOME_DIR/state/$safe.meta" \
+    "the bound raw command did not record raw-command provenance"
+  pass "raw launch models are structurally bound to the immediate command"
 }
 
 test_fable_dispatch_profile_names_its_configuration_source() {
@@ -971,7 +1005,8 @@ test_resolved_model_provenance_is_recorded_in_task_metadata() {
     "an unpinned spawn wrote task metadata"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$raw" "$PROJ_DIR" "claude --model opus --dangerously-skip-permissions")
+    "$raw" "$PROJ_DIR" "claude --model __MODEL__ --dangerously-skip-permissions" \
+    --model opus --model-source raw-launch-command)
   status=$?
   expect_code 0 "$status" "a raw launch command should still spawn"
   assert_grep "model_source=raw-launch-command" "$HOME_DIR/state/$raw.meta" \
@@ -1047,6 +1082,7 @@ test_fable_model_flag_refuses_before_endpoint_or_metadata
 test_fable_model_from_secondmate_config_is_refused_naming_that_file
 test_fable_in_a_raw_launch_command_is_refused
 test_fable_in_a_wrapper_path_does_not_block_a_safe_raw_model
+test_raw_launch_model_is_bound_to_the_immediate_command
 test_fable_dispatch_profile_names_its_configuration_source
 test_resolved_model_provenance_is_recorded_in_task_metadata
 test_default_model_sentinel_is_refused

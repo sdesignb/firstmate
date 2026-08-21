@@ -92,7 +92,7 @@ A bare `<harness>` (for example `claude`) resolves only the adapter; the spawn m
 `bin/fm-harness.sh secondmate-model` and `bin/fm-harness.sh secondmate-effort` print the optional 2nd/3rd tokens (empty when absent, or when the file is absent/`default`/harness-only); they read only `config/secondmate-harness`, never `config/crew-harness`, which stays a bare adapter name.
 For a `--secondmate` spawn, `bin/fm-spawn.sh` populates `MODEL`/`EFFORT` from those tokens only when the harness itself came from the secondmate config path for that spawn.
 For a local route, an explicit per-spawn `--harness` flag or positional harness arg requires an explicit `--model` and starts clean on effort unless the caller passes `--effort`.
-A raw launch command must carry exactly one literal `--model` option so the launch owner can resolve and validate it.
+A raw launch command must be one simple command carrying exactly one `--model __MODEL__` or `--model=__MODEL__` placeholder plus `--model <name> --model-source raw-launch-command`, so the launch owner can inject and validate the model bound to that executable's arguments.
 A remote route accepts only a verified harness adapter and refuses a raw launch command at the host boundary.
 When the file's tokens do apply, an explicit per-spawn `--model` or `--effort` flag always wins over the file's token for that axis.
 Because this resolves from the file on every spawn, the pin is durable across every respawn (recovery, `/updatefirstmate`, restart) exactly like the harness axis itself - e.g. `config/secondmate-harness` containing `claude opus` keeps a secondmate pinned to Opus even if the primary's own default model later changes.

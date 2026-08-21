@@ -1138,6 +1138,7 @@ one-element default array is accepted^{"default":[{"harness":"codex","model":"gp
 rule profile without model is flagged^{"rules":[{"when":"focused feature","use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs model
 default profile without model is flagged^{"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile needs model
 default model sentinel is flagged^{"rules":[{"when":"focused feature","use":{"harness":"claude","model":"default"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model must be concrete
+dash model sentinel is flagged^{"rules":[{"when":"focused feature","use":{"harness":"claude","model":"-"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model must be concrete
 empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
 array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
 array profile with malformed model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","model":5}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present

@@ -1051,7 +1051,6 @@ crew_dispatch_validate() {
     elif [(.rules // [])[]? | profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
     elif malformed_optional_fields([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile model and effort must be non-empty strings when present"
     elif [(.rules // [])[]? | profiles(.use?)[]? | select(has("model") | not)] | length > 0 then "each use profile needs model"
-    elif [(.rules // [])[]? | profiles(.use?)[]? | select(.model == "default")] | length > 0 then "use profile model must be concrete"
     elif [(.rules // [])[]? | select(has("select") and ((.select? | type) != "string" or (.select | length) == 0))] | length > 0 then "select must be a non-empty string"
     elif [(.rules // [])[]? | .select? // empty | select(. != "quota-balanced")] | length > 0 then
       "unknown select: " + ([ (.rules // [])[]? | .select? // empty | select(. != "quota-balanced") ] | unique | join(", "))
@@ -1061,7 +1060,6 @@ crew_dispatch_validate() {
     elif has("default") and ([profiles(.default)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length) > 0 then "each default profile needs harness"
     elif has("default") and malformed_optional_fields([profiles(.default)[]?]) then "default profile model and effort must be non-empty strings when present"
     elif has("default") and ([profiles(.default)[]? | select(has("model") | not)] | length) > 0 then "each default profile needs model"
-    elif has("default") and ([profiles(.default)[]? | select(.model == "default")] | length) > 0 then "default profile model must be concrete"
     else
       (configured_profiles
         | map(.harness)
@@ -1082,9 +1080,13 @@ crew_dispatch_validate() {
   # bin/fm-spawn.sh independently preserves the selected profile's source at
   # launch. The predicate stays in bin/fm-model-policy-lib.sh; this only feeds
   # it each configured model.
-  local model prohibited=
-  while IFS= read -r model; do
+  local model profile_scope nonconcrete_scope= prohibited=
+  while IFS="	" read -r profile_scope model; do
     [ -n "$model" ] || continue
+    if ! fm_model_policy_is_concrete "$model"; then
+      nonconcrete_scope=$profile_scope
+      break
+    fi
     if fm_model_policy_matched_token "$model" >/dev/null; then
       case " $prohibited " in
         *" $model "*) ;;
@@ -1098,11 +1100,15 @@ $(jq -r '
       elif ($value | type) == "object" then [$value]
       else []
       end;
-    ([(.rules // [])[]? | profiles(.use?)[]?]
-      + (if has("default") then [profiles(.default)[]?] else [] end))
-    | map(.model?) | map(select(type == "string")) | .[]
+    ([(.rules // [])[]? | profiles(.use?)[]? | ["use", .model?]]
+      + [if has("default") then profiles(.default)[]? | ["default", .model?] else empty end])
+    | .[] | select(.[1] | type == "string") | @tsv
   ' "$file" 2>/dev/null || true)
 EOF
+  if [ -n "$nonconcrete_scope" ]; then
+    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $nonconcrete_scope profile model must be concrete"
+    return 0
+  fi
   if [ -n "$prohibited" ]; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - prohibited model: $prohibited"
     return 0

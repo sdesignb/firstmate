@@ -56,7 +56,7 @@ run_spawn() {  # <home> <fakebin> <spawn-args...>
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_BACKEND=tmux PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" --model test-model 2>&1
 }
 
 # A ship spawn must stop when its delivery contract was never decided or cannot be

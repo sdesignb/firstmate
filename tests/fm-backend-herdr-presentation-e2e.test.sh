@@ -29,6 +29,9 @@ FOCUS_AUDIT_LOG="$TMP_ROOT/focus-audit.log"
 ACTIVE_SEEDED_CONTROL="$TMP_ROOT/active-seeded-control"
 POST_CREATE_ABORT_CONTROL="$TMP_ROOT/post-create-abort-control"
 mkdir -p "$FAKEBIN"
+TEST_AGENT="$TMP_ROOT/test-agent"
+printf '#!/bin/sh\nsleep 120\n' > "$TEST_AGENT"
+chmod +x "$TEST_AGENT"
 : > "$HERDR_CALL_LOG"
 : > "$TREEHOUSE_CALL_LOG"
 : > "$MOVE_CALL_LOG"
@@ -385,7 +388,7 @@ make_project() {  # <dir>
 spawn_task() {  # <id> <home> <project>
   local id=$1 home=$2 project=$3
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120' --model test-model" --mode no-mistakes --yolo off --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "$TEST_AGENT --model __MODEL__" --model test-model --model-source raw-launch-command --mode no-mistakes --yolo off --backend herdr
 }
 
 finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>
@@ -410,7 +413,7 @@ finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
 spawn_secondmate_task() {
   local id=$1 home=$2
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$home" "sh -c 'sleep 120' --model test-model" --secondmate --backend herdr
+    "$ROOT/bin/fm-spawn.sh" "$id" "$home" "$TEST_AGENT --model __MODEL__" --model test-model --model-source raw-launch-command --secondmate --backend herdr
 }
 
 teardown_task() {  # <id> <home>

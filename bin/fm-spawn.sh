@@ -40,7 +40,7 @@
 #   from that harness's launch rather than guessed.
 #   Every spawn resolves a concrete model before launch. The --model flag, the
 #   selected config/crew-dispatch.json profile, the model token in
-#   config/secondmate-harness, a raw launch command's own --model option, and a
+#   config/secondmate-harness, a raw launch command's bound model placeholder, and a
 #   relaunch task record are checked against the fleet-wide prohibited-model
 #   policy (bin/fm-model-policy-lib.sh, the single owner of which ids match).
 #   A missing or unprovable model and a prohibited model both REFUSE the spawn.
@@ -116,7 +116,11 @@
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
+#   new adapters. It must be one simple command with exactly one `--model __MODEL__`
+#   or `--model=__MODEL__` binding and an explicit `--model` plus
+#   `--model-source raw-launch-command`; shell operators and compound commands are
+#   refused because firstmate cannot prove which executable receives their model.
+#   For pi and pi-signed, fm-spawn resolves the selected executable
 #   name from PATH once, probes that concrete path with --help, and launches the
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
@@ -128,7 +132,7 @@
 #   harness from config/secondmate-harness. An explicit per-spawn --harness or
 #   positional harness arg requires --model and starts with a clean effort
 #   default unless the caller also passes --effort. A raw launch command carries
-#   its own required --model option. When
+#   its required bound model placeholder. When
 #   the file governs the spawn, its model/effort tokens are re-resolved on every
 #   respawn exactly like the harness axis, and explicit --model/--effort flags
 #   still win over the file's tokens.
@@ -381,10 +385,6 @@ if [ "$MODEL_SOURCE" = config/secondmate-harness ]; then
     echo "error: model '$MODEL' does not match config/secondmate-harness, so that source cannot be recorded" >&2
     exit 1
   }
-fi
-if [ "$MODEL_SOURCE" = raw-launch-command ]; then
-  echo "error: raw-launch-command provenance is resolved from the command itself and cannot be supplied with --model-source" >&2
-  exit 1
 fi
 if [ "$MODEL_SOURCE" = task-metadata ] && [ "$RELAUNCH" -eq 0 ]; then
   RECOVERY_META="$STATE/${POS[0]:-}.meta"
@@ -1199,29 +1199,37 @@ resolve_pi_executable() {
   esac
 }
 
-resolve_raw_launch_model() {
-  local command=$1 token model= expect_value=0 count=0
+validate_raw_launch_model_binding() {
+  local command=$1 token executable_seen=0 expect_placeholder=0 count=0
+  case "$command" in
+    *$'\n'*|*$'\r'*|*[!A-Za-z0-9_./:@%+=,\ -]*) return 1 ;;
+  esac
   local IFS=$' \t\n'
   # shellcheck disable=SC2086
   set -- $command
   for token in "$@"; do
-    if [ "$expect_value" -eq 1 ]; then
-      model=$token
-      expect_value=0
+    if [ "$executable_seen" -eq 0 ]; then
+      if [[ $token =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+        continue
+      fi
+      executable_seen=1
+      continue
+    fi
+    if [ "$expect_placeholder" -eq 1 ]; then
+      [ "$token" = __MODEL__ ] || return 1
+      expect_placeholder=0
       count=$((count + 1))
       continue
     fi
     case "$token" in
-      --model) expect_value=1 ;;
-      --model=*) model=${token#--model=}; count=$((count + 1)) ;;
+      --model) expect_placeholder=1 ;;
+      --model=__MODEL__) count=$((count + 1)) ;;
+      --model=*|*__MODEL__*) return 1 ;;
     esac
   done
-  [ "$expect_value" -eq 0 ] || return 1
+  [ "$executable_seen" -eq 1 ] || return 1
+  [ "$expect_placeholder" -eq 0 ] || return 1
   [ "$count" -eq 1 ] || return 1
-  case "$model" in
-    ''|*[!A-Za-z0-9._/@:+-]*) return 1 ;;
-  esac
-  printf '%s\n' "$model"
 }
 
 # Pi's CLI surface is version-dependent, so probe the resolved executable's help
@@ -1320,23 +1328,25 @@ launch_template() {
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
-    RAW_MODEL=$(resolve_raw_launch_model "$LAUNCH") || {
-      echo "error: the raw launch command must contain exactly one literal --model <name> or --model=<name> so firstmate can resolve and check the model" >&2
+    [ "$MODEL_SET" -eq 1 ] && [ "$MODEL_SOURCE" = raw-launch-command ] || {
+      echo "error: a raw launch command requires --model <name> --model-source raw-launch-command and exactly one bound model placeholder" >&2
       exit 1
     }
-    if [ "$MODEL_SET" -eq 1 ] && [ "$MODEL" != "$RAW_MODEL" ]; then
-      echo "error: --model '$MODEL' does not match the raw launch command's model '$RAW_MODEL'" >&2
+    validate_raw_launch_model_binding "$LAUNCH" || {
+      echo "error: the raw launch command must be one simple command with exactly one --model __MODEL__ or --model=__MODEL__ model placeholder; shell operators, quoting, and compound commands cannot prove which executable receives the model" >&2
       exit 1
-    fi
-    MODEL=$RAW_MODEL
+    }
     MODEL_SOURCE=raw-launch-command
-    fm_model_policy_require_concrete "$MODEL" "$MODEL_SOURCE" "$ID" || exit 1
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
     done
     ;;
   '')
+    [ "$MODEL_SOURCE" != raw-launch-command ] || {
+      echo "error: --model-source raw-launch-command requires a raw launch command with a bound model placeholder" >&2
+      exit 1
+    }
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
     # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
     # every other kind uses the crew harness only when no dispatch profile file is
@@ -1359,6 +1369,10 @@ case "$ARG3" in
     LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
   *)
+    [ "$MODEL_SOURCE" != raw-launch-command ] || {
+      echo "error: --model-source raw-launch-command requires a raw launch command with a bound model placeholder" >&2
+      exit 1
+    }
     HARNESS=$ARG3
     LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
@@ -2869,8 +2883,10 @@ sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
+sq_model=$(shell_quote "$MODEL")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
+LAUNCH=${LAUNCH//__MODEL__/$sq_model}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}

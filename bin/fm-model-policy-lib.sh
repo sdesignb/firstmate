@@ -13,6 +13,8 @@
 # which is the thing the captain wants reported.
 #
 # Public interface:
+#   fm_model_policy_is_concrete <model>
+#     Return 0 only for a concrete model value; empty, default, and - return 1.
 #   fm_model_policy_matched_token <model>
 #     Print <model> and return 0 when it names a prohibited model; return 1
 #     otherwise. Callers must resolve the model before invoking this policy.
@@ -33,6 +35,13 @@
 
 # Every route that can carry a model into a launch calls this; adding a new
 # route means adding a call, not a second matcher.
+fm_model_policy_is_concrete() {
+  case "${1:-}" in
+    ''|default|-) return 1 ;;
+  esac
+  return 0
+}
+
 fm_model_policy_matched_token() {
   local model=${1:-} lower
   lower=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
@@ -64,12 +73,10 @@ fm_model_policy_check() {
 
 fm_model_policy_require_concrete() {
   local model=${1:-} source=${2:-} subject=${3:-launch}
-  case "$model" in
-    ''|default|-)
-      printf 'error: no concrete model resolved for %s from %s; pass an explicit model because implicit harness defaults are prohibited.\n' \
-        "$subject" "$(fm_model_policy_source_label "$source")" >&2
-      return 1
-      ;;
-  esac
+  if ! fm_model_policy_is_concrete "$model"; then
+    printf 'error: no concrete model resolved for %s from %s; pass an explicit model because implicit harness defaults are prohibited.\n' \
+      "$subject" "$(fm_model_policy_source_label "$source")" >&2
+    return 1
+  fi
   fm_model_policy_check "$model" "$source"
 }
