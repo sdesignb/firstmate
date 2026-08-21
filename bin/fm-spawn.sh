@@ -1114,8 +1114,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ -n "$KIND" ] || KIND=ship
   if [ "$MODEL_SET" -eq 0 ]; then
     MODEL=$(fm_meta_get "$RELAUNCH_META" model)
-    MODEL_SOURCE=$(fm_meta_get "$RELAUNCH_META" model_source)
-    [ -n "$MODEL_SOURCE" ] || MODEL_SOURCE=task-metadata
+    MODEL_SOURCE=task-metadata
   elif [ "$MODEL_SOURCE" = task-metadata ]; then
     RELAUNCH_RECORDED_MODEL=$(fm_meta_get "$RELAUNCH_META" model)
     [ "$RELAUNCH_RECORDED_MODEL" = "$MODEL" ] || {

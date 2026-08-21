@@ -120,7 +120,7 @@ exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
-printf 'codex\n' > "$PARENT/config/secondmate-harness"
+printf 'codex gpt-5.5\n' > "$PARENT/config/secondmate-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
 printf 'codex\n' > "$PARENT/config/crew-harness"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$PARENT/data/backlog.md"

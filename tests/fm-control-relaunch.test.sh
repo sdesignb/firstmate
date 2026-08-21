@@ -851,15 +851,21 @@ test_ship_relaunch_ignores_the_crew_harness_config() {
 }
 
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
-  local dir out
+  local dir out meta
   dir=$(new_case spawnharness rl21)
   add_ship_task "$dir" rl21 claude
+  meta="$dir/home/state/rl21.meta"
+  sed 's/^model_source=task-metadata$/model_source=config\/crew-dispatch.json/' \
+    "$meta" > "$meta.tmp"
+  mv "$meta.tmp" "$meta"
   mkdir -p "$dir/home/config"
   printf 'codex\n' > "$dir/home/config/crew-harness"
   printf 'zsh' > "$dir/fake/command"
   out=$(run_spawn "$dir" rl21 --relaunch)
   [ "$(meta_field "$dir" rl21 harness)" = claude ] \
     || fail "fm-spawn --relaunch without --harness must reuse the recorded harness, got '$(meta_field "$dir" rl21 harness)'"
+  [ "$(meta_field "$dir" rl21 model_source)" = task-metadata ] \
+    || fail "fm-spawn --relaunch preserved stale model provenance instead of recording task metadata"
   assert_contains "$out" "spawned rl21 harness=claude" "the launch should report the recorded harness"
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
 }
