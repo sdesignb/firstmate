@@ -14,8 +14,9 @@
 #        fm-harness.sh secondmate-effort   print the optional EFFORT token from
 #                                        config/secondmate-harness, or empty when absent.
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
-# whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
-# harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
+# whitespace-separated. A bare "<harness>" resolves only the adapter; callers
+# must separately supply the concrete model required by bin/fm-spawn.sh.
+# Only the first non-empty, non-comment line is parsed.
 # Model/effort come ONLY from this file - config/crew-harness stays a bare adapter
 # name and is never parsed for a model.
 # Detection layers: verified environment markers first, then process ancestry.
@@ -157,9 +158,8 @@ secondmate_field() {
 
 # Resolve the harness the PRIMARY uses to launch SECONDMATE agents: a fallback
 # chain config/secondmate-harness -> config/crew-harness -> own. An absent or
-# "default" secondmate-harness token defers to the crew resolution, so an unset
-# secondmate-harness behaves exactly as before this knob existed (a secondmate
-# launched on the crew harness). config/secondmate-harness is the PRIMARY's own
+# "default" secondmate-harness token defers to the crew resolution for the
+# adapter. config/secondmate-harness is the PRIMARY's own
 # setting and is never inherited downstream - secondmates do not spawn secondmates.
 resolve_secondmate() {
   local sm

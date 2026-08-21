@@ -1066,10 +1066,10 @@ crew_dispatch_validate() {
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
     return 0
   fi
-  # A dispatch profile reaches bin/fm-spawn.sh as a bare --model, so its spawn
-  # refusal could only name the flag. Refusing here instead names the file the
-  # prohibited model actually lives in. The predicate stays in
-  # bin/fm-model-policy-lib.sh; this only feeds it each configured model.
+  # Bootstrap rejects every prohibited configured candidate before intake, and
+  # bin/fm-spawn.sh independently preserves the selected profile's source at
+  # launch. The predicate stays in bin/fm-model-policy-lib.sh; this only feeds
+  # it each configured model.
   local model prohibited=
   while IFS= read -r model; do
     [ -n "$model" ] || continue

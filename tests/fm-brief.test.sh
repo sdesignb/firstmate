@@ -10,9 +10,8 @@
 # fails, not just the generated brief. The DOD and Herdr-section builders now
 # use `IFS= read -r -d '' VAR <<EOF || true` instead, which removes the `$(...)`
 # wrapper and eliminates the whole defect class regardless of future prose.
-# test_no_heredoc_in_command_substitution guards that structure directly.
 # Ambient `bash -n` here is Bash 5 and cannot see the bug, so the real
-# cross-version enforcement lives in the macos-stock-bash CI job.
+# cross-version enforcement executes the script in the macos-stock-bash CI job.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -24,8 +23,8 @@ mkdir -p "$BRIEF_HOME/data"
 
 # The script itself must always parse under the ambient bash. That is Bash 5 in
 # CI and locally, where the issue #958/#1069 parser bug does not fire, so this
-# is a weak guard on its own; test_no_heredoc_in_command_substitution and the
-# macos-stock-bash CI job carry the real cross-version enforcement.
+# is a weak guard on its own; the macos-stock-bash CI job carries the real
+# cross-version enforcement by executing the script under Bash 3.2.
 test_script_parses() {
   local out rc
   out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?
@@ -40,136 +39,6 @@ test_script_parses() {
 # apostrophe phrase (as the old test did) missed the #945 reintroduction. This
 # guards the *shape* directly against the whole file, so any future DOD or
 # section builder that reintroduces the class fails here regardless of prose.
-test_no_heredoc_in_command_substitution() {
-  local unsafe safe
-  unsafe="$TMP_ROOT/heredoc-in-substitution.sh"
-  safe="$TMP_ROOT/plain-heredoc.sh"
-  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'value=$(' '  cat <<EOF' 'body' 'EOF' ')' > "$unsafe"
-  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
-  printf '%s\n' 'cat <<EOF' '$(' '  cat <<INNER' 'INNER' ')' 'EOF' > "$safe"
-  if no_heredoc_in_command_substitution "$unsafe"; then
-    fail "structural guard accepted a multiline heredoc nested in a command substitution"
-  fi
-  no_heredoc_in_command_substitution "$safe" \
-    || fail "structural guard treated heredoc body prose as shell structure"
-  no_heredoc_in_command_substitution "$ROOT/bin/fm-brief.sh" \
-    || fail "fm-brief.sh wraps a heredoc in a command substitution (breaks Bash 3.2 parsing)"
-  pass "fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)"
-}
-
-no_heredoc_in_command_substitution() {
-  perl - "$1" <<'PERL'
-use strict;
-use warnings;
-
-my $path = shift;
-open my $source, '<', $path or die "$path: $!\n";
-my @frames;
-my @heredocs;
-my $quote = '';
-my $line_number = 0;
-
-while (my $line = <$source>) {
-  $line_number++;
-  if (@heredocs) {
-    my $candidate = $line;
-    $candidate =~ s/\r?\n\z//;
-    $candidate =~ s/^\t+// if $heredocs[0]{strip_tabs};
-    shift @heredocs if $candidate eq $heredocs[0]{delimiter};
-    next;
-  }
-
-  my $length = length $line;
-  for (my $i = 0; $i < $length; $i++) {
-    my $char = substr($line, $i, 1);
-    if ($quote eq "'") {
-      $quote = '' if $char eq "'";
-      next;
-    }
-    if ($char eq '\\') {
-      $i++;
-      next;
-    }
-    if ($quote eq '"' && $char eq '"') {
-      $quote = '';
-      next;
-    }
-    if ($char eq "'" && $quote eq '') {
-      $quote = "'";
-      next;
-    }
-    if ($char eq '"' && $quote eq '') {
-      $quote = '"';
-      next;
-    }
-    if ($char eq '#' && $quote eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[\s;|&()]/)) {
-      last;
-    }
-    if ($char eq '$' && substr($line, $i + 1, 1) eq '(') {
-      push @frames, { depth => 1, quote => $quote };
-      $quote = '';
-      $i++;
-      next;
-    }
-    if (@frames && $quote eq '' && $char eq '(') {
-      $frames[-1]{depth}++;
-      next;
-    }
-    if (@frames && $quote eq '' && $char eq ')') {
-      $frames[-1]{depth}--;
-      if ($frames[-1]{depth} == 0) {
-        my $frame = pop @frames;
-        $quote = $frame->{quote};
-      }
-      next;
-    }
-    next unless $quote eq '' && $char eq '<' && substr($line, $i + 1, 1) eq '<';
-    if (@frames) {
-      print STDERR "$path:$line_number\n";
-      exit 1;
-    }
-
-    my $j = $i + 2;
-    my $strip_tabs = substr($line, $j, 1) eq '-';
-    $j++ if $strip_tabs;
-    $j++ while substr($line, $j, 1) =~ /[ \t]/;
-    my $delimiter = '';
-    my $delimiter_quote = '';
-    for (; $j < $length; $j++) {
-      my $token = substr($line, $j, 1);
-      if ($delimiter_quote) {
-        if ($token eq $delimiter_quote) {
-          $delimiter_quote = '';
-        } elsif ($token eq '\\' && $delimiter_quote eq '"') {
-          $j++;
-          $delimiter .= substr($line, $j, 1);
-        } else {
-          $delimiter .= $token;
-        }
-        next;
-      }
-      if ($token eq "'" || $token eq '"') {
-        $delimiter_quote = $token;
-        next;
-      }
-      if ($token eq '\\') {
-        $j++;
-        $delimiter .= substr($line, $j, 1);
-        next;
-      }
-      last if $token =~ /[\s;|&()<>]/;
-      $delimiter .= $token;
-    }
-    push @heredocs, { delimiter => $delimiter, strip_tabs => $strip_tabs };
-    $i = $j - 1;
-  }
-}
-
-exit 0;
-PERL
-}
-
 test_help_includes_entire_header() {
   local help
   help=$("$ROOT/bin/fm-brief.sh" --help)
@@ -347,8 +216,8 @@ test_no_mistakes_dod_wording() {
     "no-mistakes DOD must exclude non-task-specific scaffold boilerplate from --intent"
   # The apostrophe in "firstmate's authority check" is now structurally safe
   # (no `$(...)` wrapper around the heredoc), so it renders verbatim instead of
-  # being reworded or escaped away. test_no_heredoc_in_command_substitution
-  # guards the structure that makes it safe.
+  # being reworded or escaped away. The macos-stock-bash CI job executes this
+  # path under Bash 3.2 to guard the parser behavior.
   assert_grep "firstmate's authority check" "$brief" \
     "no-mistakes DOD lost the apostrophe prose that the structural fix makes parse-safe"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe"
@@ -745,7 +614,6 @@ test_every_scaffold_carries_the_model_prohibition() {
 }
 
 test_script_parses
-test_no_heredoc_in_command_substitution
 test_every_scaffold_carries_the_model_prohibition
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs

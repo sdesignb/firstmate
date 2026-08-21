@@ -136,6 +136,20 @@ run_spawn() {
 # Ship spawns carry an explicit delivery contract (AGENTS.md section 7); these
 # tests are about profile resolution, so they pass a fixed valid one.
 run_ship_spawn() {
+  local arg has_model=0 has_source=0 raw=0 home=$1
+  for arg in "$@"; do
+    case "$arg" in
+      --model|--model=*) has_model=1 ;;
+      --model-source|--model-source=*) has_source=1 ;;
+      *' '*) raw=1 ;;
+    esac
+  done
+  if [ "$raw" -eq 0 ] && [ "$has_model" -eq 0 ]; then
+    set -- "$@" --model test-model
+  fi
+  if [ "$raw" -eq 0 ] && [ -f "$home/config/crew-dispatch.json" ] && [ "$has_source" -eq 0 ]; then
+    set -- "$@" --model-source flag
+  fi
   run_spawn "$@" --mode no-mistakes --yolo off
 }
 
@@ -152,7 +166,7 @@ assert_meta_profile() {
   assert_grep "effort=$effort" "$meta" "meta missing effort=$effort"
 }
 
-test_no_profile_keeps_claude_profile_defaults() {
+test_no_profile_uses_an_explicit_claude_model() {
   local rec id out status expected launch
   id=profile-off-z1
   rec=$(make_spawn_case profile-off claude "$id")
@@ -160,14 +174,14 @@ test_no_profile_keeps_claude_profile_defaults() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn without profile flags should succeed"
+  expect_code 0 "$status" "claude spawn with an explicit model should succeed"
   assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
+  assert_meta_profile "$HOME_DIR/state/$id.meta" claude test-model default
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --model 'test-model' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
-  pass "no --model/--effort records defaults and types the claude launch instructions"
+  pass "a concrete model is recorded and typed into the claude launch instructions"
 }
 
 test_non_cursor_launch_clears_inherited_cursor_markers() {
@@ -203,7 +217,7 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME=home/grok-home PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with relative home overrides should succeed"
@@ -232,7 +246,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME=home/grok-home PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$relative_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$relative_id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with relative FM_HOME defaults should succeed"
@@ -252,7 +266,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$absolute_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$absolute_id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled FM_HOME defaults should succeed"
@@ -280,7 +294,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled overrides should succeed"
@@ -302,7 +316,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
     cd "$CASE_DIR" || exit 1
     FM_ROOT_OVERRIDE='' FM_HOME=missing-home \
       FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 1 "$status" "spawn with an unresolvable relative home should fail"
@@ -313,7 +327,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
     cd "$CASE_DIR" || exit 1
     FM_ROOT_OVERRIDE='' FM_HOME=home \
       FM_STATE_OVERRIDE=missing-state FM_DATA_OVERRIDE=home/data \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 1 "$status" "spawn with an unresolvable relative state override should fail"
@@ -324,7 +338,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
     cd "$CASE_DIR" || exit 1
     FM_ROOT_OVERRIDE='' FM_HOME=home \
       FM_STATE_OVERRIDE=home/state FM_DATA_OVERRIDE=missing-data \
-      "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+      "$SPAWN" "$id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 1 "$status" "spawn with an unresolvable relative data override should fail"
@@ -373,11 +387,14 @@ test_active_dispatch_profile_allows_explicit_harness() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 \
+    --model-source config/crew-dispatch.json --effort high)
   status=$?
   expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement"
   assert_contains "$out" "spawned $id harness=codex" "spawn did not report explicit codex harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
+  assert_grep "model_source=config/crew-dispatch.json" "$HOME_DIR/state/$id.meta" \
+    "meta lost the dispatch profile's model source"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' --dangerously-bypass-approvals-and-sandbox" \
     "explicit harness launch did not thread model and effort"
@@ -408,13 +425,13 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" "custom-agent --flag")
+    "$id" "$PROJ_DIR" "custom-agent --model test-model --flag")
   status=$?
   expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement"
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
+  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent test-model default
   launch=$(cat "$LAUNCH_LOG")
-  [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  [ "$launch" = "custom-agent --model test-model --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -708,7 +725,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
     FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
+    "$SPAWN" "$id" "$PROJ_DIR" --model test-model --mode no-mistakes --yolo off 2>&1)
   status=$?
   expect_code 1 "$status" "a missing pi-signed executable should refuse the spawn"
   assert_contains "$out" "pi-signed executable not found on PATH" \
@@ -723,19 +740,20 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   id=profile-pi-signed-secondmate-z8d
   rec=$(make_spawn_case profile-pi-signed-secondmate codex "$id")
   read_case_record "$rec"
-  printf '%s\n' pi-signed > "$HOME_DIR/config/secondmate-harness"
+  printf '%s\n' 'pi-signed test-model' > "$HOME_DIR/config/secondmate-harness"
   sm="$CASE_DIR/secondmate-home"
   make_seeded_secondmate_home "$sm" "$id"
   sm=$(cd "$sm" && pwd -P)
 
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$sm" --secondmate)
   status=$?
   expect_code 0 "$status" "pi-signed persistent secondmate spawn should succeed"
   assert_contains "$out" "spawned $id harness=pi-signed kind=secondmate" \
     "pi-signed secondmate spawn did not preserve its runtime identity"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed default default
+  assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed test-model default
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
+  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular --model 'test-model' -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
     "pi-signed secondmate did not force the regular TUI with Pi's primary extension launch shape"
   pass "pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics"
 }
@@ -817,12 +835,13 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
   sm="$CASE_DIR/secondmate-home"
   make_seeded_secondmate_home "$sm" "$id"
 
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$sm" --secondmate --model test-model)
   status=$?
   expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement"
   assert_contains "$out" "spawned $id harness=codex kind=secondmate" "secondmate launch did not use secondmate harness resolution"
   assert_grep "kind=secondmate" "$HOME_DIR/state/$id.meta" "secondmate meta missing kind=secondmate"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" codex default default
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex test-model default
   pass "active crew-dispatch profile does not block secondmate launches"
 }
 
@@ -891,6 +910,41 @@ test_fable_in_a_raw_launch_command_is_refused() {
   pass "a fable model hidden in a raw launch command is refused"
 }
 
+test_fable_in_a_wrapper_path_does_not_block_a_safe_raw_model() {
+  local rec id out status
+  id=profile-safe-raw-wrapper-z22b
+  rec=$(make_spawn_case profile-safe-raw-wrapper claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "/opt/fable-wrapper --model gpt-5")
+  status=$?
+  expect_code 0 "$status" "the policy must inspect the raw command's model, not its harness path"
+  assert_grep "model=gpt-5" "$HOME_DIR/state/$id.meta" \
+    "the raw command's resolved model was not recorded"
+  pass "a raw command's non-model fable text does not trigger the model prohibition"
+}
+
+test_fable_dispatch_profile_names_its_configuration_source() {
+  local rec id out status
+  id=profile-fable-config-z22c
+  rec=$(make_spawn_case profile-fable-config claude "$id")
+  read_case_record "$rec"
+  printf '%s\n' \
+    '{"default":{"harness":"claude","model":"fable","effort":"high"}}' \
+    > "$HOME_DIR/config/crew-dispatch.json"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --model fable \
+    --model-source config/crew-dispatch.json)
+  status=$?
+  expect_code 1 "$status" "a fable model selected by a dispatch profile must be refused"
+  assert_contains "$out" "config/crew-dispatch.json" \
+    "the profile refusal did not name its configuration source"
+  assert_absent "$HOME_DIR/state/$id.meta" "the profile-fable refusal wrote task metadata"
+  pass "a dispatch-profile fable refusal names config/crew-dispatch.json"
+}
+
 test_resolved_model_provenance_is_recorded_in_task_metadata() {
   local rec pinned unpinned raw out status
   pinned=profile-model-source-pinned-z23
@@ -907,14 +961,14 @@ test_resolved_model_provenance_is_recorded_in_task_metadata() {
   assert_grep "model_source=flag" "$HOME_DIR/state/$pinned.meta" \
     "meta did not record that the model was pinned explicitly"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$unpinned" "$PROJ_DIR")
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$unpinned" "$PROJ_DIR" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "an unpinned spawn should still succeed"
-  assert_grep "model_source=harness-default" "$HOME_DIR/state/$unpinned.meta" \
-    "meta did not record that no model was pinned for this task"
-  assert_contains "$out" "no model pinned" \
-    "an unpinned spawn did not say that firstmate cannot verify the harness's own default"
+  expect_code 1 "$status" "an unpinned spawn must refuse an implicit harness default"
+  assert_contains "$out" "implicit harness defaults are prohibited" \
+    "the unpinned refusal did not explain the explicit-model requirement"
+  assert_absent "$HOME_DIR/state/$unpinned.meta" \
+    "an unpinned spawn wrote task metadata"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$raw" "$PROJ_DIR" "claude --model opus --dangerously-skip-permissions")
@@ -922,9 +976,8 @@ test_resolved_model_provenance_is_recorded_in_task_metadata() {
   expect_code 0 "$status" "a raw launch command should still spawn"
   assert_grep "model_source=raw-launch-command" "$HOME_DIR/state/$raw.meta" \
     "meta did not point at the launch command that carries this task's model"
-  case "$out" in
-    *"no model pinned"*) fail "a raw launch command carries its own model and is not an unpinned launch" ;;
-  esac
+  assert_grep "model=opus" "$HOME_DIR/state/$raw.meta" \
+    "meta did not record the raw launch command's concrete model"
   pass "task metadata records the resolved model and where it came from"
 }
 
@@ -942,7 +995,7 @@ test_a_model_merely_containing_those_letters_still_spawns() {
   pass "the model prohibition is bounded to the fable model itself"
 }
 
-test_no_profile_keeps_claude_profile_defaults
+test_no_profile_uses_an_explicit_claude_model
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
@@ -976,6 +1029,8 @@ test_active_dispatch_profile_does_not_block_secondmate_launch
 test_fable_model_flag_refuses_before_endpoint_or_metadata
 test_fable_model_from_secondmate_config_is_refused_naming_that_file
 test_fable_in_a_raw_launch_command_is_refused
+test_fable_in_a_wrapper_path_does_not_block_a_safe_raw_model
+test_fable_dispatch_profile_names_its_configuration_source
 test_resolved_model_provenance_is_recorded_in_task_metadata
 test_a_model_merely_containing_those_letters_still_spawns
 

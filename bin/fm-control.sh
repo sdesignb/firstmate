@@ -134,6 +134,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-model-policy-lib.sh
+. "$SCRIPT_DIR/fm-model-policy-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -505,9 +507,11 @@ CONFIG_HARNESS=
 CONFIG_MODEL=
 CONFIG_EFFORT=
 PRIOR_MODEL=
+PRIOR_MODEL_SOURCE=
 PRIOR_EFFORT=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
+TARGET_MODEL_SOURCE=
 TARGET_EFFORT=
 
 journal_write() {  # <phase> [extra-line]...
@@ -601,6 +605,7 @@ resolve_relaunch_profile() {
   PRIOR_HARNESS=$HARNESS
   PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
   PRIOR_MODEL=$(fm_meta_get "$META" model)
+  PRIOR_MODEL_SOURCE=$(fm_meta_get "$META" model_source)
   PRIOR_EFFORT=$(fm_meta_get "$META" effort)
   [ -n "$PRIOR_MODEL" ] || PRIOR_MODEL=default
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
@@ -652,12 +657,24 @@ resolve_relaunch_profile() {
   # caller names them too.
   if [ "$MODEL_SET" = 1 ]; then
     TARGET_MODEL=$NEW_MODEL
+    TARGET_MODEL_SOURCE=flag
   elif [ "$HARNESS_SET" = 0 ] && [ -n "$CONFIG_HARNESS" ]; then
-    TARGET_MODEL=${CONFIG_MODEL:-default}
+    if [ -n "$CONFIG_MODEL" ]; then
+      TARGET_MODEL=$CONFIG_MODEL
+      TARGET_MODEL_SOURCE=config/secondmate-harness
+    elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
+      TARGET_MODEL=$PRIOR_MODEL
+      TARGET_MODEL_SOURCE=${PRIOR_MODEL_SOURCE:-task-metadata}
+    else
+      TARGET_MODEL=default
+      TARGET_MODEL_SOURCE=
+    fi
   elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
     TARGET_MODEL=$PRIOR_MODEL
+    TARGET_MODEL_SOURCE=${PRIOR_MODEL_SOURCE:-task-metadata}
   else
     TARGET_MODEL=default
+    TARGET_MODEL_SOURCE=
   fi
   if [ "$EFFORT_SET" = 1 ]; then
     TARGET_EFFORT=$NEW_EFFORT
@@ -668,6 +685,9 @@ resolve_relaunch_profile() {
   else
     TARGET_EFFORT=default
   fi
+  [ -n "$TARGET_MODEL" ] && [ "$TARGET_MODEL" != default ] \
+    || die "relaunch of $ID has no concrete model for $TARGET_HARNESS; pass --model because implicit harness defaults are prohibited"
+  fm_model_policy_check "$TARGET_MODEL" "$TARGET_MODEL_SOURCE" || exit 1
 }
 
 # safe_checkpoint: prove, before anything is stopped, that the work a relaunch
@@ -812,7 +832,7 @@ do_relaunch() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
-  [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
+  spawn_args+=(--model "$TARGET_MODEL" --model-source "$TARGET_MODEL_SOURCE")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then

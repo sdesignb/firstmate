@@ -110,7 +110,8 @@ When changing any primary watcher adapter, update `docs/supervision-protocols/`,
 
 ## Launch profile axes
 
-`bin/fm-spawn.sh` accepts concrete `--harness`, `--model`, and `--effort` values chosen by firstmate at intake.
+`bin/fm-spawn.sh` requires a concrete `--model`, accepts concrete `--harness` and `--effort` values chosen by firstmate at intake, and records the model source explicitly.
+Pass `--model-source config/crew-dispatch.json` for a selected dispatch profile and `--model-source flag` for an explicit captain override when that file is active.
 Do not make the shell scripts parse or match natural-language dispatch rules.
 
 Effort precedence is an explicit per-task captain instruction first, then any applicable standing dispatch profile or secondmate pin, then the generic fallback below.

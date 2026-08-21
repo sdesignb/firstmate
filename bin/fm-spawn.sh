@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] --model <name> [--model-source <source>] [--effort <level>] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] --model <name> [--model-source <source>] [--effort <level>] [--backend <name>]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--model-source <source>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -16,7 +16,7 @@
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--model-source <source>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
 #   the launch half of the control plane (bin/fm-control.sh relaunch), which
@@ -38,19 +38,15 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
-#   Every route a model can arrive by is checked against the fleet-wide
-#   prohibited-model policy (bin/fm-model-policy-lib.sh, the single owner of which
-#   ids match): the --model flag, the model token in config/secondmate-harness,
-#   and the text of a raw launch command. A prohibited model REFUSES the spawn,
-#   naming the offending value and its source, and never substitutes another
-#   model. Two routes are outside what this script can inspect: a dispatch
-#   profile reaches it as --model (bin/fm-bootstrap.sh refuses a prohibited model
-#   in config/crew-dispatch.json at its own source), and a harness's own
-#   configured default is invisible here, so an unpinned launch prints a notice
-#   saying exactly that instead of implying it was checked.
+#   Every spawn resolves a concrete model before launch. The --model flag, the
+#   selected config/crew-dispatch.json profile, the model token in
+#   config/secondmate-harness, a raw launch command's own --model option, and a
+#   relaunch task record are checked against the fleet-wide prohibited-model
+#   policy (bin/fm-model-policy-lib.sh, the single owner of which ids match).
+#   A missing or unprovable model and a prohibited model both REFUSE the spawn.
 #   The resolved model's provenance is recorded as model_source= in the task's
-#   meta beside model=: flag, config/secondmate-harness, raw-launch-command, or
-#   harness-default.
+#   meta beside model=: flag, config/crew-dispatch.json,
+#   config/secondmate-harness, raw-launch-command, or task-metadata.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -129,9 +125,10 @@
 #   config/secondmate-harness may also carry an optional model and effort as extra
 #   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
 #   --secondmate spawn, those tokens apply only when this spawn also resolves its
-#   harness from config/secondmate-harness. An explicit per-spawn --harness,
-#   positional harness arg, or raw launch command starts with clean model/effort
-#   defaults unless the caller also passes explicit --model/--effort flags. When
+#   harness from config/secondmate-harness. An explicit per-spawn --harness or
+#   positional harness arg requires --model and starts with a clean effort
+#   default unless the caller also passes --effort. A raw launch command carries
+#   its own required --model option. When
 #   the file governs the spawn, its model/effort tokens are re-resolved on every
 #   respawn exactly like the harness axis, and explicit --model/--effort flags
 #   still win over the file's tokens.
@@ -285,7 +282,9 @@ KIND=ship
 KIND_SET=0
 HARNESS_ARG=
 MODEL=
-MODEL_SOURCE=harness-default
+MODEL_SOURCE=
+MODEL_SOURCE_ARG=
+MODEL_SOURCE_SET=0
 EFFORT=
 BACKEND_ARG=
 MODE=
@@ -309,6 +308,7 @@ for a in "$@"; do
     case "$want_value" in
       harness) HARNESS_ARG=$a; HARNESS_SET=1 ;;
       model) MODEL=$a; MODEL_SET=1 ;;
+      model-source) MODEL_SOURCE_ARG=$a; MODEL_SOURCE_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
@@ -327,6 +327,8 @@ for a in "$@"; do
     --harness=*) HARNESS_ARG=${a#--harness=}; HARNESS_SET=1 ;;
     --model) want_value=model ;;
     --model=*) MODEL=${a#--model=}; MODEL_SET=1 ;;
+    --model-source) want_value=model-source ;;
+    --model-source=*) MODEL_SOURCE_ARG=${a#--model-source=}; MODEL_SOURCE_SET=1 ;;
     --effort) want_value=effort ;;
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
     --backend) want_value=backend ;;
@@ -343,13 +345,53 @@ done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 [ "$HARNESS_SET" -eq 0 ] || [ -n "$HARNESS_ARG" ] || { echo "error: --harness requires a non-empty value" >&2; exit 1; }
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
+[ "$MODEL_SOURCE_SET" -eq 0 ] || [ -n "$MODEL_SOURCE_ARG" ] || { echo "error: --model-source requires a non-empty value" >&2; exit 1; }
+[ "$MODEL_SOURCE_SET" -eq 0 ] || [ "$MODEL_SET" -eq 1 ] || { echo "error: --model-source requires --model" >&2; exit 1; }
+case "$MODEL_SOURCE_ARG" in
+  ''|flag|config/crew-dispatch.json|config/secondmate-harness|raw-launch-command|task-metadata) ;;
+  *) echo "error: --model-source must be one of flag, config/crew-dispatch.json, config/secondmate-harness, raw-launch-command, task-metadata" >&2; exit 1 ;;
+esac
 # The prohibited-model policy is checked on every route a model can arrive by
 # (bin/fm-model-policy-lib.sh owns which ids it matches). The flag route is
 # checked here, before any lock, worktree, or endpoint exists, so an explicitly
 # pinned fable model costs nothing to refuse.
 if [ "$MODEL_SET" -eq 1 ]; then
-  MODEL_SOURCE=flag
-  fm_model_policy_check "$MODEL" flag || exit 1
+  MODEL_SOURCE=${MODEL_SOURCE_ARG:-flag}
+fi
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] \
+   && [ -f "$CONFIG/crew-dispatch.json" ] && [ "$MODEL_SET" -eq 1 ] \
+   && [ "$MODEL_SOURCE_SET" -eq 0 ]; then
+  echo "error: config/crew-dispatch.json is active - pass --model-source flag for a captain override or --model-source config/crew-dispatch.json for the selected profile" >&2
+  exit 1
+fi
+if [ "$MODEL_SOURCE" = config/crew-dispatch.json ]; then
+  [ -f "$CONFIG/crew-dispatch.json" ] || {
+    echo "error: --model-source config/crew-dispatch.json requires that configuration file to exist" >&2
+    exit 1
+  }
+  jq -e --arg model "$MODEL" '.. | objects | select(.model? == $model)' \
+    "$CONFIG/crew-dispatch.json" >/dev/null 2>&1 || {
+      echo "error: model '$MODEL' is not present in config/crew-dispatch.json, so that source cannot be recorded" >&2
+      exit 1
+    }
+fi
+if [ "$MODEL_SOURCE" = config/secondmate-harness ]; then
+  CONFIGURED_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
+  [ "$CONFIGURED_MODEL" = "$MODEL" ] || {
+    echo "error: model '$MODEL' does not match config/secondmate-harness, so that source cannot be recorded" >&2
+    exit 1
+  }
+fi
+if [ "$MODEL_SOURCE" = raw-launch-command ]; then
+  echo "error: raw-launch-command provenance is resolved from the command itself and cannot be supplied with --model-source" >&2
+  exit 1
+fi
+if [ "$MODEL_SOURCE" = task-metadata ] && [ "$RELAUNCH" -eq 0 ]; then
+  echo "error: --model-source task-metadata applies only to --relaunch" >&2
+  exit 1
+fi
+if [ "$MODEL_SET" -eq 1 ]; then
+  fm_model_policy_check "$MODEL" "$MODEL_SOURCE" || exit 1
 fi
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
@@ -494,7 +536,10 @@ spawn_remote_secondmate() {
     return 1
   fi
   if [ "$model" = - ]; then
-    echo "notice: no model pinned for $id - this launch inherits $harness's own default model, which firstmate cannot check against the prohibited-model rule; pass --model to pin it" >&2
+    echo "error: no model resolved for $id; pass --model or add a model token to config/secondmate-harness because implicit harness defaults are prohibited" >&2
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
   fi
   # A remote second mate always runs on Herdr: its server belongs to the host's
   # own GUI login session, so the endpoint outlives every SSH connection that
@@ -790,7 +835,7 @@ spawn_abort_cleanup() {
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
             echo "tasktmp=${TASK_TMP:-}"
-            echo "model=${MODEL:-default}"
+            echo "model=$MODEL"
             echo "model_source=$MODEL_SOURCE"
             echo "effort=${EFFORT:-default}"
             echo "backend=orca"
@@ -900,6 +945,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   shared_args=()
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
+  [ -z "$MODEL_SOURCE" ] || shared_args+=(--model-source "$MODEL_SOURCE")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
@@ -1049,6 +1095,17 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
+  if [ "$MODEL_SET" -eq 0 ]; then
+    MODEL=$(fm_meta_get "$RELAUNCH_META" model)
+    MODEL_SOURCE=$(fm_meta_get "$RELAUNCH_META" model_source)
+    [ -n "$MODEL_SOURCE" ] || MODEL_SOURCE=task-metadata
+  elif [ "$MODEL_SOURCE" = task-metadata ]; then
+    RELAUNCH_RECORDED_MODEL=$(fm_meta_get "$RELAUNCH_META" model)
+    [ "$RELAUNCH_RECORDED_MODEL" = "$MODEL" ] || {
+      echo "error: model '$MODEL' does not match the task metadata, so that source cannot be recorded" >&2
+      exit 1
+    }
+  fi
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
@@ -1124,6 +1181,31 @@ resolve_pi_executable() {
       printf '%s/%s\n' "$dir" "$(basename "$candidate")"
       ;;
   esac
+}
+
+resolve_raw_launch_model() {
+  local command=$1 token model= expect_value=0 count=0
+  local IFS=$' \t\n'
+  # shellcheck disable=SC2086
+  set -- $command
+  for token in "$@"; do
+    if [ "$expect_value" -eq 1 ]; then
+      model=$token
+      expect_value=0
+      count=$((count + 1))
+      continue
+    fi
+    case "$token" in
+      --model) expect_value=1 ;;
+      --model=*) model=${token#--model=}; count=$((count + 1)) ;;
+    esac
+  done
+  [ "$expect_value" -eq 0 ] || return 1
+  [ "$count" -eq 1 ] || return 1
+  case "$model" in
+    ''|*[!A-Za-z0-9._/@:+-]*) return 1 ;;
+  esac
+  printf '%s\n' "$model"
 }
 
 # Pi's CLI surface is version-dependent, so probe the resolved executable's help
@@ -1222,13 +1304,17 @@ launch_template() {
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
-    # The escape hatch carries its own flags, so a prohibited model can ride in
-    # the command text itself rather than through --model.
-    fm_model_policy_check "$LAUNCH" raw-launch-command || exit 1
-    # The command text, not this script, decides the model here. Record that as
-    # the provenance so the fleet knows where to look, and let it stand in for
-    # the pin rather than reporting an unpinned launch.
-    [ "$MODEL_SET" -eq 1 ] || MODEL_SOURCE=raw-launch-command
+    RAW_MODEL=$(resolve_raw_launch_model "$LAUNCH") || {
+      echo "error: the raw launch command must contain exactly one literal --model <name> or --model=<name> so firstmate can resolve and check the model" >&2
+      exit 1
+    }
+    if [ "$MODEL_SET" -eq 1 ] && [ "$MODEL" != "$RAW_MODEL" ]; then
+      echo "error: --model '$MODEL' does not match the raw launch command's model '$RAW_MODEL'" >&2
+      exit 1
+    fi
+    MODEL=$RAW_MODEL
+    MODEL_SOURCE=raw-launch-command
+    fm_model_policy_check "$MODEL" "$MODEL_SOURCE" || exit 1
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -1296,7 +1382,7 @@ case "$HARNESS" in
     if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
       if CURSOR_MODELS=$(fm_cursor_list_models "$CURSOR_BIN"); then
         if ! printf '%s\n' "$CURSOR_MODELS" | fm_cursor_catalog_has_model "$MODEL"; then
-          echo "error: Cursor model '$MODEL' is not available from '$CURSOR_BIN --list-models'; choose an id listed by that command or omit --model" >&2
+          echo "error: Cursor model '$MODEL' is not available from '$CURSOR_BIN --list-models'; choose an id listed by that command" >&2
           exit 1
         fi
       fi
@@ -1330,13 +1416,13 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   fi
 fi
 
-# Every model route has now resolved, so the recorded provenance is final.
-# firstmate can check the routes it can see; it cannot read a harness's own
-# configured default, so an unpinned launch says so rather than implying the
-# prohibited-model check covered it.
-if [ -z "$MODEL" ] && [ "$MODEL_SOURCE" = harness-default ]; then
-  echo "notice: no model pinned for $ID - this launch inherits $HARNESS's own default model, which firstmate cannot check against the prohibited-model rule; pass --model to pin it" >&2
-fi
+# Every model route has now resolved, so an implicit harness default is a
+# refusal and the recorded value plus provenance are always concrete.
+[ -n "$MODEL" ] || {
+  echo "error: no model resolved for $ID; pass --model because implicit harness defaults are prohibited" >&2
+  exit 1
+}
+fm_model_policy_check "$MODEL" "$MODEL_SOURCE" || exit 1
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
@@ -2706,7 +2792,7 @@ preserve_relaunch_meta() {
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   echo "tasktmp=$TASK_TMP"
-  echo "model=${MODEL:-default}"
+  echo "model=$MODEL"
   echo "model_source=$MODEL_SOURCE"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"

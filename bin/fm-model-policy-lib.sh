@@ -13,16 +13,15 @@
 # which is the thing the captain wants reported.
 #
 # Public interface:
-#   fm_model_policy_matched_token <text>
-#     Print the first whitespace-separated token of <text> that names a
-#     prohibited model and return 0; return 1 when none does. <text> may be a
-#     bare model id or a whole launch command, so one matcher covers both.
-#   fm_model_policy_check <text> <source>
-#     Return 0 when <text> names no prohibited model. Otherwise print the
+#   fm_model_policy_matched_token <model>
+#     Print <model> and return 0 when it names a prohibited model; return 1
+#     otherwise. Callers must resolve the model before invoking this policy.
+#   fm_model_policy_check <model> <source>
+#     Return 0 when <model> is permitted. Otherwise print the
 #     refusal, naming the offending value AND <source>, and return 1.
 #   fm_model_policy_source_label <source>
-#     Render a known source token - flag, config/secondmate-harness,
-#     raw-launch-command, harness-default - as readable prose. Any other value
+#     Render a known source token - flag, config/crew-dispatch.json,
+#     config/secondmate-harness, raw-launch-command, task-metadata - as readable prose. Any other value
 #     is passed through, so a call site can supply its own phrase. These tokens
 #     are the same vocabulary bin/fm-spawn.sh records as model_source= in a
 #     task's meta.
@@ -35,36 +34,27 @@
 # Every route that can carry a model into a launch calls this; adding a new
 # route means adding a call, not a second matcher.
 fm_model_policy_matched_token() {
-  local text=${1:-} word lower
-  local IFS=$' \t\n'
-  # Deliberate word splitting: a launch command must be scanned token by token,
-  # and a bare model id is simply a one-token case of the same scan.
-  # shellcheck disable=SC2086
-  set -- $text
-  for word in "$@"; do
-    lower=$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')
-    if [[ $lower =~ (^|[^a-z])fable([^a-z]|$) ]]; then
-      printf '%s\n' "$word"
-      return 0
-    fi
-  done
-  return 1
+  local model=${1:-} lower
+  lower=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
+  [[ $lower =~ (^|[^a-z])fable([^a-z]|$) ]] || return 1
+  printf '%s\n' "$model"
 }
 
 fm_model_policy_source_label() {
   case "${1:-}" in
     flag) printf '%s\n' 'the --model flag' ;;
+    config/crew-dispatch.json) printf '%s\n' 'config/crew-dispatch.json' ;;
     config/secondmate-harness) printf '%s\n' 'the model token in config/secondmate-harness' ;;
     raw-launch-command) printf '%s\n' 'the raw launch command' ;;
-    harness-default) printf '%s\n' "the harness's own default" ;;
+    task-metadata) printf '%s\n' 'the task metadata' ;;
     '') printf '%s\n' 'an unnamed source' ;;
     *) printf '%s\n' "$1" ;;
   esac
 }
 
 fm_model_policy_check() {
-  local text=${1:-} source=${2:-} offender
-  offender=$(fm_model_policy_matched_token "$text") || return 0
+  local model=${1:-} source=${2:-} offender
+  offender=$(fm_model_policy_matched_token "$model") || return 0
   printf 'error: refusing to launch on the prohibited fable model %s, which came from %s.\n' \
     "'$offender'" "$(fm_model_policy_source_label "$source")" >&2
   printf '%s\n' \

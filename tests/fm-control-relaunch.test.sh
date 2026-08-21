@@ -152,7 +152,8 @@ add_ship_task() {
     echo "mode=no-mistakes"
     echo "yolo=off"
     echo "tasktmp=/tmp/fm-$id"
-    echo "model=default"
+    echo "model=test-model"
+    echo "model_source=task-metadata"
     echo "effort=default"
   } > "$home/state/$id.meta"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
@@ -418,7 +419,7 @@ test_harness_switch_moves_the_record_and_clears_prior_wiring() {
   mkdir -p "$dir/wt/.claude"
   printf '{"hooks":{}}\n' > "$dir/wt/.claude/settings.local.json"
   printf 'codex' > "$dir/fake/becomes"
-  out=$(run_control "$dir" rl4 relaunch --harness codex --note "switching runtime"); rc=$?
+  out=$(run_control "$dir" rl4 relaunch --harness codex --model test-model --note "switching runtime"); rc=$?
   expect_code 0 "$rc" "a harness switch should succeed"$'\n'"$out"
   assert_contains "$out" "harness=codex from=claude" "the outcome should name both harnesses"
   [ "$(meta_field "$dir" rl4 harness)" = codex ] || fail "the record should follow the switch"
@@ -434,17 +435,17 @@ test_harness_switch_does_not_carry_the_old_profile_axes() {
   local dir out rc
   dir=$(new_case profile rl5)
   add_ship_task "$dir" rl5 claude
-  sed 's/^model=default$/model=opus/; s/^effort=default$/effort=xhigh/' \
+  sed 's/^model=test-model$/model=opus/; s/^effort=default$/effort=xhigh/' \
     "$dir/home/state/rl5.meta" > "$dir/home/state/rl5.meta.tmp"
   mv "$dir/home/state/rl5.meta.tmp" "$dir/home/state/rl5.meta"
   printf 'codex' > "$dir/fake/becomes"
-  out=$(run_control "$dir" rl5 relaunch --harness codex --note "switching runtime"); rc=$?
+  out=$(run_control "$dir" rl5 relaunch --harness codex --model test-model --note "switching runtime"); rc=$?
   expect_code 0 "$rc" "a harness switch should succeed"$'\n'"$out"
-  [ "$(meta_field "$dir" rl5 model)" = default ] \
+  [ "$(meta_field "$dir" rl5 model)" = test-model ] \
     || fail "a model chosen for the old harness must not carry to a different one"
   [ "$(meta_field "$dir" rl5 effort)" = default ] \
     || fail "an effort chosen for the old harness must not carry to a different one"
-  pass "fm-control relaunch: a harness switch resets model and effort unless they are named too"
+  pass "fm-control relaunch: a harness switch does not carry unnamed profile axes"
 }
 
 test_harness_switch_resolves_a_prefixed_recorded_harness() {
@@ -458,7 +459,7 @@ test_harness_switch_resolves_a_prefixed_recorded_harness() {
   printf '%s\n' "$dir/home/state/rl32.turn-ended" > "$auth"
   printf 'token=fm.abcdefabcdef\n' > "$dir/wt/.fm-grok-turnend"
 
-  out=$(run_control "$dir" rl32 relaunch --harness claude --note "switching runtime"); rc=$?
+  out=$(run_control "$dir" rl32 relaunch --harness claude --model test-model --note "switching runtime"); rc=$?
   expect_code 0 "$rc" "relaunch should resolve a prefixed recorded harness"$'\n'"$out"
   [ "$(sed -n '1p' "$dir/fake/literal")" = /exit ] \
     || fail "relaunch should stop a grok-prefixed task with grok's exit command"
@@ -509,7 +510,7 @@ test_same_harness_relaunch_keeps_the_profile_axes() {
   local dir out rc
   dir=$(new_case keepprofile rl6)
   add_ship_task "$dir" rl6 claude
-  sed 's/^model=default$/model=opus/; s/^effort=default$/effort=high/' \
+  sed 's/^model=test-model$/model=opus/; s/^effort=default$/effort=high/' \
     "$dir/home/state/rl6.meta" > "$dir/home/state/rl6.meta.tmp"
   mv "$dir/home/state/rl6.meta.tmp" "$dir/home/state/rl6.meta"
   out=$(run_control "$dir" rl6 relaunch --note "same runtime"); rc=$?
@@ -642,6 +643,64 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
 }
 
+test_secondmate_fable_relaunch_refuses_before_stopping_the_agent() {
+  local dir home out rc
+  dir=$(new_case smfable smf)
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/smf"
+  printf 'codex fable high\n' > "$home/config/secondmate-harness"
+  printf '# secondmate brief\n' > "$home/data/smf/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'smf\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-smf"
+    echo "endpoint_task_id=smf"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=test-model"
+    echo "model_source=task-metadata"
+    echo "effort=high"
+    echo "home=$dir/smhome"
+  } > "$home/state/smf.meta"
+  printf '%s\n' "fm-smf" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+
+  out=$(run_control "$dir" smf relaunch); rc=$?
+  expect_code 1 "$rc" "a configured fable relaunch must refuse before stopping the agent"
+  assert_contains "$out" "config/secondmate-harness" \
+    "the preflight refusal did not name the configured model source"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "the fable preflight refusal stopped the running agent"
+  [ -z "$(cat "$dir/fake/literal")" ] \
+    || fail "the fable preflight refusal delivered lifecycle input"
+  pass "fm-control relaunch: configured fable refuses before the agent is stopped"
+}
+
+test_unresolved_relaunch_model_refuses_before_stopping_the_agent() {
+  local dir out rc
+  dir=$(new_case unresolved-model rlmodel)
+  add_ship_task "$dir" rlmodel claude
+  sed 's/^model=test-model$/model=default/' "$dir/home/state/rlmodel.meta" \
+    > "$dir/home/state/rlmodel.meta.tmp"
+  mv "$dir/home/state/rlmodel.meta.tmp" "$dir/home/state/rlmodel.meta"
+
+  out=$(run_control "$dir" rlmodel relaunch --note "retry with a concrete model"); rc=$?
+  expect_code 1 "$rc" "a relaunch without a concrete model must refuse"
+  assert_contains "$out" "implicit harness defaults are prohibited" \
+    "the unresolved-model refusal did not explain the required correction"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "the unresolved-model preflight refusal stopped the running agent"
+  [ -z "$(cat "$dir/fake/literal")" ] \
+    || fail "the unresolved-model preflight refusal delivered lifecycle input"
+  pass "fm-control relaunch: unresolved model refuses before the agent is stopped"
+}
+
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
   local dir home out rc
   dir=$(new_case invalid-effort sm6)
@@ -748,9 +807,9 @@ test_explicit_secondmate_harness_ignores_configured_profile_axes() {
   printf '%s\n' "fm-sm4" > "$dir/fake/windows"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
   printf 'codex' > "$dir/fake/becomes"
-  out=$(run_control "$dir" sm4 relaunch --harness codex); rc=$?
+  out=$(run_control "$dir" sm4 relaunch --harness codex --model test-model); rc=$?
   expect_code 0 "$rc" "an explicit secondmate harness should relaunch"$'\n'"$out"
-  [ "$(meta_field "$dir" sm4 model)" = default ] \
+  [ "$(meta_field "$dir" sm4 model)" = test-model ] \
     || fail "an explicit secondmate harness must not inherit the configured model"
   [ "$(meta_field "$dir" sm4 effort)" = default ] \
     || fail "an explicit secondmate harness must not inherit the configured effort"
@@ -916,7 +975,7 @@ test_launch_failure_keeps_the_prior_record_and_reports_it() {
   # The endpoint's shell is not in the recorded worktree, so the launch owner
   # refuses AFTER the previous agent has already been stopped.
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
-  out=$(run_control "$dir" rl13 relaunch --harness codex --note "carry this forward"); rc=$?
+  out=$(run_control "$dir" rl13 relaunch --harness codex --model test-model --note "carry this forward"); rc=$?
   expect_code 1 "$rc" "a failed launch should fail closed"$'\n'"$out"
   assert_contains "$out" "no agent is running" "the failure should say no agent is running"
   assert_contains "$out" "$dir/wt" "the failure should say where the work is preserved"
@@ -937,7 +996,7 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
   add_ship_task "$dir" rl30 claude
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
   FM_FAKE_CWD_RACE_READY="$dir/cwd-race-ready" \
-    run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
+    run_control "$dir" rl30 relaunch --harness codex --model test-model --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
   while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
@@ -970,7 +1029,7 @@ test_post_publication_launch_failure_keeps_the_new_record() {
   add_ship_task "$dir" rl24 claude
   printf 'codex' > "$dir/fake/becomes"
   out=$(FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START=1 \
-    run_control "$dir" rl24 relaunch --harness codex --note "keep the published record"); rc=$?
+    run_control "$dir" rl24 relaunch --harness codex --model test-model --note "keep the published record"); rc=$?
   expect_code 1 "$rc" "a post-publication launch failure should fail closed"$'\n'"$out"
   [ "$(meta_field "$dir" rl24 harness)" = codex ] \
     || fail "a published replacement record must not be rewritten to the prior harness"
@@ -1007,7 +1066,7 @@ test_complete_journal_failure_rolls_back_from_durable_phase() {
   real_mv=$(command -v mv)
   make_mv_failure_stub "$dir"
   out=$(FM_REAL_MV="$real_mv" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL=1 \
-    run_control "$dir" rl27 relaunch --harness codex --note "keep durable phase honest"); rc=$?
+    run_control "$dir" rl27 relaunch --harness codex --model test-model --note "keep durable phase honest"); rc=$?
   expect_code 1 "$rc" "a failed complete journal replacement should fail closed"$'\n'"$out"
   [ "$(journal_field "$dir" rl27 phase)" = failed:launching ] \
     || fail "rollback should start from the last durable launching phase"
@@ -1084,7 +1143,8 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
     echo "kind=secondmate"
     echo "mode=secondmate"
     echo "yolo=off"
-    echo "model=default"
+    echo "model=test-model"
+    echo "model_source=task-metadata"
     echo "effort=default"
     echo "home=$dir/smhome"
     echo "projects="
@@ -1123,6 +1183,8 @@ test_secondmate_relaunch_refuses_an_unmarked_home() {
     echo "kind=secondmate"
     echo "mode=secondmate"
     echo "yolo=off"
+    echo "model=test-model"
+    echo "model_source=task-metadata"
   } > "$home/state/sm2.meta"
   printf '%s\n' "fm-sm2" > "$dir/fake/windows"
   out=$(run_control "$dir" sm2 relaunch); rc=$?
@@ -1151,6 +1213,8 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
     echo "kind=secondmate"
     echo "mode=secondmate"
     echo "yolo=off"
+    echo "model=test-model"
+    echo "model_source=task-metadata"
     echo "home=$dir/smhome"
   } > "$home/state/sm5.meta"
   printf '%s\n' "fm-sm5" > "$dir/fake/windows"
@@ -1329,6 +1393,8 @@ test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
+test_secondmate_fable_relaunch_refuses_before_stopping_the_agent
+test_unresolved_relaunch_model_refuses_before_stopping_the_agent
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop
 test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes
