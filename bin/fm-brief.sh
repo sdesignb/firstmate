@@ -178,6 +178,26 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
+# The captain's fleet-wide prohibition on the fable model (AGENTS.md section 4)
+# has to travel with the worker, because the measured burn came from a scout's
+# parallel HELPER agents rather than from the scout itself. bin/fm-spawn.sh
+# refuses the routes firstmate controls; these lines are what carry the same
+# rule into agents a worker spawns for itself, which firstmate never sees.
+# Built with `read -r -d ''` rather than a heredoc inside a command
+# substitution, for the Bash 3.2 parse safety this file's tests pin.
+IFS= read -r -d '' MODEL_RULE <<'EOF' || true
+8. Never run any agent on the fable model.
+   Every helper agent, subagent, or parallel worker you spawn must be pinned to an explicit non-fable model, and you must pass this same requirement on to anything they spawn in turn.
+   If a profile, configuration, or default resolves to fable, that is a misconfiguration: report it and stop rather than working around it or substituting a model yourself.
+EOF
+MODEL_RULE=${MODEL_RULE%$'\n'}
+IFS= read -r -d '' MODEL_RULE_CHARTER <<'EOF' || true
+Never run any agent on the fable model.
+Every crewmate, scout, helper agent, or subagent you spawn must be pinned to an explicit non-fable model, and you must pass this same requirement on to every worker you brief.
+If a profile, configuration, or default resolves to fable, that is a misconfiguration: report it rather than working around it or substituting a model yourself.
+EOF
+MODEL_RULE_CHARTER=${MODEL_RULE_CHARTER%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -219,6 +239,7 @@ Do not invent a second delegation system.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
+$MODEL_RULE_CHARTER
 
 # Requests from the main firstmate
 You are a firstmate in your own home, so an incoming message reaches you in your own chat.
@@ -335,6 +356,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+$MODEL_RULE
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -452,6 +474,7 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+$MODEL_RULE
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
