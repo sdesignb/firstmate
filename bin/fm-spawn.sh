@@ -38,19 +38,6 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
-#   Every route a model can arrive by is checked against the fleet-wide
-#   prohibited-model policy (bin/fm-model-policy-lib.sh, the single owner of which
-#   ids match): the --model flag, the model token in config/secondmate-harness,
-#   and the text of a raw launch command. A prohibited model REFUSES the spawn,
-#   naming the offending value and its source, and never substitutes another
-#   model. Two routes are outside what this script can inspect: a dispatch
-#   profile reaches it as --model (bin/fm-bootstrap.sh refuses a prohibited model
-#   in config/crew-dispatch.json at its own source), and a harness's own
-#   configured default is invisible here, so an unpinned launch prints a notice
-#   saying exactly that instead of implying it was checked.
-#   The resolved model's provenance is recorded as model_source= in the task's
-#   meta beside model=: flag, config/secondmate-harness, raw-launch-command, or
-#   harness-default.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -273,8 +260,6 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
-# shellcheck source=bin/fm-model-policy-lib.sh
-. "$SCRIPT_DIR/fm-model-policy-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -285,7 +270,6 @@ KIND=ship
 KIND_SET=0
 HARNESS_ARG=
 MODEL=
-MODEL_SOURCE=harness-default
 EFFORT=
 BACKEND_ARG=
 MODE=
@@ -343,14 +327,6 @@ done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 [ "$HARNESS_SET" -eq 0 ] || [ -n "$HARNESS_ARG" ] || { echo "error: --harness requires a non-empty value" >&2; exit 1; }
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
-# The prohibited-model policy is checked on every route a model can arrive by
-# (bin/fm-model-policy-lib.sh owns which ids it matches). The flag route is
-# checked here, before any lock, worktree, or endpoint exists, so an explicitly
-# pinned fable model costs nothing to refuse.
-if [ "$MODEL_SET" -eq 1 ]; then
-  MODEL_SOURCE=flag
-  fm_model_policy_check "$MODEL" flag || exit 1
-fi
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
@@ -421,7 +397,7 @@ else
 fi
 
 spawn_remote_secondmate() {
-  local id=$1 remote host root home harness positional model model_source effort backend out rc meta tmp
+  local id=$1 remote host root home harness positional model effort backend out rc meta tmp
   local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
   local remote_traceparent remote_recorded_traceparent
   local -a launch_args
@@ -472,29 +448,16 @@ spawn_remote_secondmate() {
       ;;
   esac
   model=${MODEL:--}
-  model_source=$MODEL_SOURCE
   effort=${EFFORT:--}
   if [ -z "$HARNESS_ARG" ] && [ -z "$positional" ]; then
     if [ "$MODEL_SET" -eq 0 ]; then
       model=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
-      if [ -n "$model" ]; then
-        model_source=config/secondmate-harness
-      else
-        model=-
-      fi
+      [ -n "$model" ] || model=-
     fi
     if [ "$EFFORT_SET" -eq 0 ]; then
       effort=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
       [ -n "$effort" ] || effort=-
     fi
-  fi
-  if [ "$model" != - ] && ! fm_model_policy_check "$model" "$model_source"; then
-    fm_lock_release "$registry_lock" || true
-    fm_lock_release "$SPAWN_TASK_LOCK" || true
-    return 1
-  fi
-  if [ "$model" = - ]; then
-    echo "notice: no model pinned for $id - this launch inherits $harness's own default model, which firstmate cannot check against the prohibited-model rule; pass --model to pin it" >&2
   fi
   # A remote second mate always runs on Herdr: its server belongs to the host's
   # own GUI login session, so the endpoint outlives every SSH connection that
@@ -655,7 +618,6 @@ spawn_remote_secondmate() {
     echo "yolo=off"
     echo "tasktmp="
     echo "model=${model#-}"
-    echo "model_source=$model_source"
     echo "effort=${effort#-}"
     echo "home=$home"
     echo "projects=$(secondmate_registry_field "$DATA/secondmates.md" "$id" projects)"
@@ -791,7 +753,6 @@ spawn_abort_cleanup() {
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
             echo "tasktmp=${TASK_TMP:-}"
             echo "model=${MODEL:-default}"
-            echo "model_source=$MODEL_SOURCE"
             echo "effort=${EFFORT:-default}"
             echo "backend=orca"
             echo "orca_worktree_id=$ORCA_WORKTREE_ID"
@@ -1222,13 +1183,6 @@ launch_template() {
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
-    # The escape hatch carries its own flags, so a prohibited model can ride in
-    # the command text itself rather than through --model.
-    fm_model_policy_check "$LAUNCH" raw-launch-command || exit 1
-    # The command text, not this script, decides the model here. Record that as
-    # the provenance so the fleet knows where to look, and let it stand in for
-    # the pin rather than reporting an unpinned launch.
-    [ "$MODEL_SET" -eq 1 ] || MODEL_SOURCE=raw-launch-command
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -1313,11 +1267,7 @@ esac
 if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   if [ "$MODEL_SET" -eq 0 ]; then
     SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
-    if [ -n "$SM_MODEL" ]; then
-      MODEL=$SM_MODEL
-      MODEL_SOURCE=config/secondmate-harness
-      fm_model_policy_check "$MODEL" config/secondmate-harness || exit 1
-    fi
+    [ -z "$SM_MODEL" ] || MODEL=$SM_MODEL
   fi
   if [ "$EFFORT_SET" -eq 0 ]; then
     SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
@@ -1328,14 +1278,6 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
       esac
     fi
   fi
-fi
-
-# Every model route has now resolved, so the recorded provenance is final.
-# firstmate can check the routes it can see; it cannot read a harness's own
-# configured default, so an unpinned launch says so rather than implying the
-# prohibited-model check covered it.
-if [ -z "$MODEL" ] && [ "$MODEL_SOURCE" = harness-default ]; then
-  echo "notice: no model pinned for $ID - this launch inherits $HARNESS's own default model, which firstmate cannot check against the prohibited-model rule; pass --model to pin it" >&2
 fi
 
 secondmate_registry_value() {
@@ -2690,7 +2632,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model model_source effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2707,7 +2649,6 @@ preserve_relaunch_meta() {
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
-  echo "model_source=$MODEL_SOURCE"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"

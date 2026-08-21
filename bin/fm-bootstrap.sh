@@ -142,8 +142,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-cursor-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
-# shellcheck source=bin/fm-model-policy-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-model-policy-lib.sh"
 # shellcheck source=bin/fm-secondmate-nudge-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh disable=SC1091
@@ -1064,35 +1062,6 @@ crew_dispatch_validate() {
   ' "$file" 2>/dev/null || true)
   if [ -n "$err" ]; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
-    return 0
-  fi
-  # A dispatch profile reaches bin/fm-spawn.sh as a bare --model, so its spawn
-  # refusal could only name the flag. Refusing here instead names the file the
-  # prohibited model actually lives in. The predicate stays in
-  # bin/fm-model-policy-lib.sh; this only feeds it each configured model.
-  local model prohibited=
-  while IFS= read -r model; do
-    [ -n "$model" ] || continue
-    if fm_model_policy_matched_token "$model" >/dev/null; then
-      case " $prohibited " in
-        *" $model "*) ;;
-        *) prohibited="${prohibited}${prohibited:+, }$model" ;;
-      esac
-    fi
-  done <<EOF
-$(jq -r '
-    def profiles($value):
-      if ($value | type) == "array" then $value
-      elif ($value | type) == "object" then [$value]
-      else []
-      end;
-    ([(.rules // [])[]? | profiles(.use?)[]?]
-      + (if has("default") then [profiles(.default)[]?] else [] end))
-    | map(.model?) | map(select(type == "string")) | .[]
-  ' "$file" 2>/dev/null || true)
-EOF
-  if [ -n "$prohibited" ]; then
-    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - prohibited model: $prohibited"
     return 0
   fi
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then

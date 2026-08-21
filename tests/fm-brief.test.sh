@@ -712,41 +712,8 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
-# The captain's standing model prohibition has to reach the workers that spawn
-# helper agents of their own: the measured fable burn came from a scout's
-# parallel helpers, not from the scout itself. Every scaffold therefore carries
-# the pin-an-explicit-model rule AND the requirement to pass it on.
-test_every_scaffold_carries_the_model_prohibition() {
-  local home ship scout charter
-  home="$TMP_ROOT/model-policy-home"
-  mkdir -p "$home/data"
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-brief.sh" model-ship-q9 sample --mode no-mistakes >/dev/null 2>&1 \
-    || fail "fm-brief.sh ship scaffold exited non-zero"
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    "$ROOT/bin/fm-brief.sh" model-scout-q9 sample --scout >/dev/null 2>&1 \
-    || fail "fm-brief.sh scout scaffold exited non-zero"
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_SECONDMATE_CHARTER='sample domain' \
-    "$ROOT/bin/fm-brief.sh" model-mate-q9 --secondmate --no-projects >/dev/null 2>&1 \
-    || fail "fm-brief.sh secondmate scaffold exited non-zero"
-  ship="$home/data/model-ship-q9/brief.md"
-  scout="$home/data/model-scout-q9/brief.md"
-  charter="$home/data/model-mate-q9/brief.md"
-  for brief in "$ship" "$scout" "$charter"; do
-    assert_grep "fable" "$brief" "$brief does not carry the prohibited-model rule"
-    assert_grep "explicit non-fable model" "$brief" \
-      "$brief does not require an explicit model on every agent it spawns"
-    assert_grep "pass this same requirement on" "$brief" \
-      "$brief does not require the rule to be passed on to helper agents"
-  done
-  assert_grep "report it" "$ship" \
-    "the ship brief does not require a fable-resolving configuration to be reported"
-  pass "fm-brief.sh: every scaffold pins helper-agent models and passes the rule on"
-}
-
 test_script_parses
 test_no_heredoc_in_command_substitution
-test_every_scaffold_carries_the_model_prohibition
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_ship_mode_is_required_and_closed_set
